@@ -29,7 +29,7 @@ Using a hybrid engine of live APIs, static geographic datasets, and NASA/USGS da
     *   *Phase 4: Public Engagement (Consultation & Tourism)*
     *   *Phase 5: Global Expansion (Mars Adaptation & Climate Resilience)*
 *   **💾 Agent Memory:** Saves past analyses to an SQLite database for future reference.
-href="https://www.buymeacoffee.com/stargazex" target="_blank">
+<a href="https://www.buymeacoffee.com/stargazex" target="_blank">
   <img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" 
        alt="Buy Me A Coffee" 
        height="41" 
