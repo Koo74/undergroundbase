@@ -1,11 +1,11 @@
-# 🏙️ UndergroundBaseX (v5.1.8)
+# 🏙️ UndergroundBase (v5.1.8)
 
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://undergroundbase.streamlit.app)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/stargazex)
 
-**UndergroundBaseX** is an advanced, AI-powered geospatial analysis tool designed to identify the most suitable locations for **underground base development** in **Malaysia (Borneo & West Malaysia)**.
+**UndergroundBase** is an advanced, AI-powered geospatial analysis tool designed to identify the most suitable locations for **underground base development** in **Malaysia (Borneo & West Malaysia)**.
 
 Using a hybrid engine of live APIs, static geographic datasets, and NASA/USGS data, it evaluates sites across 12 critical criteria (Elevation, Bedrock Depth, Water Table, Seismic Risk, Geology, Population Density, Coastal Proximity, Infrastructure, Land Availability, Flood Risk, Slope, and Fault Proximity) to produce a comprehensive 5-phase development plan.
 
