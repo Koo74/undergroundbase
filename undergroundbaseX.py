@@ -1,5 +1,5 @@
 """
-UndergroundBaseX v5.1.8
+UndergroundBase v5.1.8
 =======================
 TIMELINE-FIX RELEASE (over v5.1.7):
   1. Excavation duration now scales with VOLUME (size_sqm), not elevation
@@ -4366,7 +4366,7 @@ def render_memory_explorer():
 # ============================================================================
 
 def main():
-    st.set_page_config(page_title="UndergroundBaseX", page_icon="🏙️", layout="wide")
+    st.set_page_config(page_title="UndergroundBase", page_icon="🏙️", layout="wide")
     st.markdown(CYBERPUNK_CSS, unsafe_allow_html=True)
 
     region = st.session_state.get('region', 'borneo')
@@ -4374,7 +4374,7 @@ def main():
 
     st.markdown(f"""
     <div style="text-align: center; padding: 20px 0 10px 0;">
-        <div class="main-title">🏙️ UNDERGROUNDBASEX</div>
+        <div class="main-title">🏙️ UNDERGROUNDBASE</div>
         <div class="subtitle">{region_flag} MALAYSIA · SITE SELECTOR v5.1.8</div>
         <div style="display: flex; justify-content: center; gap: 10px; margin: 10px 0;">
             <span class="phase-badge phase-badge-2">🔧 PHASE 2</span>
