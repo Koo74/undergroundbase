@@ -1,16 +1,14 @@
 """
-UndergroundBase v5.1.9
+UndergroundBase v5.2.0
 =======================
-SLOPE-API-FIX RELEASE (over v5.1.8):
-  1. estimate_slope() now uses a multi-provider fallback chain:
-       Open-Elevation → Open-Meteo Elevation → OpenTopoData
-  2. Added User-Agent headers (Streamlit Cloud IPs get blocked without them)
-  3. Added retry with exponential backoff on 429/5xx
-  4. Validates response shape before indexing (no silent KeyError→fallback)
-  5. @st.cache_data on slope lookup so successes persist across reruns
-  6. Falls through providers on ANY failure, not just non-200
-  7. Result "source" field now names the provider that actually succeeded
-All v5.1.8 fixes preserved.
+ELEVATION-API-FIX RELEASE (over v5.1.9):
+  1. NEW: _get_elevation_cached() — multi-provider fallback for site elevation
+       Open-Elevation → Open-Meteo → OpenTopoData (same chain as slope)
+  2. _get_elevation_quick() now delegates to the cached function
+  3. Elevation now counts as a LIVE source → confidence score rises
+  4. "CLEAR CACHE" button also clears the elevation cache
+  5. Fallback to geographic heuristic ONLY if all 3 providers fail
+All v5.1.9 fixes preserved (multi-provider slope, caching, User-Agent headers).
 """
 
 import streamlit as st
@@ -1585,16 +1583,16 @@ def nearest_fault(lat, lon):
     return best
 
 # ============================================================================
-# 🔧 SLOPE API — v5.1.9 MULTI-PROVIDER FALLBACK (BUG FIX)
+# 🔧 ELEVATION + SLOPE API — v5.2.0 MULTI-PROVIDER FALLBACK
 # ============================================================================
 
 _ELEV_UA = {
-    "User-Agent": "Mozilla/5.0 (compatible; UndergroundBase/5.1.9; +https://streamlit.io)",
+    "User-Agent": "Mozilla/5.0 (compatible; UndergroundBase/5.2.0; +https://streamlit.io)",
     "Accept": "application/json",
 }
 
 def _fetch_elevations_open_elevation(points: List[tuple]) -> Optional[List[float]]:
-    """Provider 1: api.open-elevation.com (single POST, 9 points)."""
+    """Provider 1: api.open-elevation.com (single POST, batch points)."""
     try:
         payload = {"locations": [{"latitude": p[0], "longitude": p[1]} for p in points]}
         r = requests.post(
@@ -1660,10 +1658,72 @@ def _fetch_elevations_opentopodata(points: List[tuple]) -> Optional[List[float]]
         return None
 
 
+_ELEV_PROVIDERS = [
+    ("Open-Elevation", _fetch_elevations_open_elevation),
+    ("Open-Meteo", _fetch_elevations_open_meteo),
+    ("OpenTopoData", _fetch_elevations_opentopodata),
+]
+
+
+def _score_elevation(elev_m: float) -> tuple:
+    """Turn a raw elevation (m) into (score, label) — same thresholds as v5.1.9."""
+    if 100 <= elev_m <= 500:
+        return 5.0, 'Optimal underground elevation'
+    elif 50 <= elev_m < 100:
+        return 4.5, 'Good underground elevation'
+    elif 500 < elev_m <= 1000:
+        return 4.5, 'High elevation, stable'
+    elif 1000 < elev_m <= 2000:
+        return 4.5, 'Very high elevation, excellent stability'
+    elif elev_m > 2000:
+        return 4.0, 'Alpine elevation, access costs high'
+    elif 20 <= elev_m < 50:
+        return 3.5, 'Moderate elevation'
+    elif 0 <= elev_m < 20:
+        return 2.0, 'Low elevation, flood risk'
+    else:
+        return 3.0, 'Sub-surface point'
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_elevation_cached(lat: float, lon: float) -> Dict:
+    """
+    🔧 v5.2.0: cached site elevation — survives Streamlit reruns.
+    Tries Open-Elevation → Open-Meteo → OpenTopoData.
+    Returns {'elev': float, 'score': float, 'label': str, 'source': str, 'live': bool}.
+    """
+    points = [(lat, lon)]
+
+    for provider_name, fetcher in _ELEV_PROVIDERS:
+        for attempt in range(2):
+            elevs = fetcher(points)
+            if elevs is not None and len(elevs) == 1:
+                elev_m = float(elevs[0])
+                score, label = _score_elevation(elev_m)
+                return {
+                    'elev': elev_m,
+                    'score': score,
+                    'label': f'{provider_name} - {label}',
+                    'source': f'{provider_name} (Live)',
+                    'live': True,
+                }
+            if attempt == 0:
+                time.sleep(0.3)
+
+    # All 3 providers failed — return a neutral placeholder; caller decides fallback
+    return {
+        'elev': None,
+        'score': None,
+        'label': None,
+        'source': 'all elevation providers failed',
+        'live': False,
+    }
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _slope_lookup_cached(lat: float, lon: float) -> Dict:
     """
-    🔧 v5.1.9: cached slope lookup — survives Streamlit reruns.
+    🔧 v5.1.9/v5.2.0: cached slope lookup — survives Streamlit reruns.
     Tries Open-Elevation → Open-Meteo → OpenTopoData.
     """
     d = 0.005
@@ -1672,14 +1732,7 @@ def _slope_lookup_cached(lat: float, lon: float) -> Dict:
         for dx in (-d, 0, d):
             points.append((lat + dy, lon + dx))
 
-    providers = [
-        ("Open-Elevation", _fetch_elevations_open_elevation),
-        ("Open-Meteo", _fetch_elevations_open_meteo),
-        ("OpenTopoData", _fetch_elevations_opentopodata),
-    ]
-
-    for provider_name, fetcher in providers:
-        # Retry each provider once on failure (handles transient 429/5xx)
+    for provider_name, fetcher in _ELEV_PROVIDERS:
         for attempt in range(2):
             elevs = fetcher(points)
             if elevs is not None:
@@ -1723,7 +1776,7 @@ def _slope_lookup_cached(lat: float, lon: float) -> Dict:
 
 
 def estimate_slope(lat: float, lon: float) -> Dict:
-    """🔧 v5.1.9: thin wrapper — the real work is cached by st.cache_data."""
+    """🔧 v5.2.0: thin wrapper — the real work is cached by st.cache_data."""
     try:
         return _slope_lookup_cached(lat, lon)
     except Exception:
@@ -1734,8 +1787,34 @@ def _slope_fallback(lat, lon):
     return {'slope_deg': 0, 'slope_pct': 0, 'risk': 'Unknown (API unavailable)',
             'score': 3.0, 'source': 'Fallback: slope unavailable'}
 
+
+def _geographic_elevation_fallback(lat: float, lon: float, region: str) -> tuple:
+    """Original v5.1.8 heuristic — used ONLY if all 3 providers fail."""
+    if region == "borneo":
+        if 5.8 < lat < 6.2 and 116.4 < lon < 116.8:
+            return (5.0, 1500, 'Fallback: Kinabalu region - excellent underground site')
+        elif lat > 4.5 and lon > 117.5:
+            return (4.0, 300, 'Fallback: E. Sabah hills - good underground site')
+        elif 2.5 < lat and 114.0 < lon < 115.5:
+            return (4.5, 200, 'Fallback: Sarawak interior - good underground site')
+        elif lat > 5.0 and 115.0 < lon < 117.0:
+            return (4.5, 800, 'Fallback: Crocker Range - excellent underground site')
+        else:
+            return (3.5, 50, 'Fallback: Lowland area')
+    else:
+        if 3.3 < lat < 4.7 and 101.3 < lon < 101.9:
+            return (4.5, 1200, 'Fallback: Titiwangsa highlands - excellent underground site')
+        elif lat > 4.5 and 101.5 < lon < 102.5:
+            return (3.5, 250, 'Fallback: Kelantan interior - moderate site')
+        elif 3.5 < lat < 4.6 and 101.9 < lon < 102.8:
+            return (3.5, 300, 'Fallback: Pahang interior - moderate site')
+        elif lat < 2.5 and 102.5 < lon < 103.8:
+            return (3.0, 80, 'Fallback: Johor interior')
+        else:
+            return (3.0, 30, 'Fallback: Coastal lowland')
+
 # ============================================================================
-# [END SLOPE FIX — rest of file unchanged from v5.1.8]
+# [END ELEVATION + SLOPE FIX — rest of file unchanged from v5.1.9]
 # ============================================================================
 
 def estimate_groundwater_quality(lat, lon, region):
@@ -1979,61 +2058,12 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
         return f"Underground City Suitability Analysis ({self.region.upper()} + USGS + OneGeology)"
 
     def _get_elevation_quick(self, location: Location) -> tuple:
-        cache_key = f"elev_{location.lat:.4f}_{location.lon:.4f}"
-        if 'elevation_cache' not in st.session_state:
-            st.session_state.elevation_cache = {}
-        if cache_key in st.session_state.elevation_cache:
-            cached = st.session_state.elevation_cache[cache_key]
-            return cached[0], cached[1], cached[2] + " [cached]"
-
-        try:
-            url = f"https://api.open-elevation.com/api/v1/lookup?locations={location.lat},{location.lon}"
-            r = requests.get(url, headers=_ELEV_UA, timeout=3)
-            elev = r.json()['results'][0]['elevation']
-            if 100 <= elev <= 500:
-                result = (5.0, elev, 'Live Elevation API - Optimal underground elevation')
-            elif 50 <= elev < 100:
-                result = (4.5, elev, 'Live Elevation API - Good underground elevation')
-            elif 500 < elev <= 1000:
-                result = (4.5, elev, 'Live Elevation API - High elevation, stable')
-            elif 1000 < elev <= 2000:
-                result = (4.5, elev, 'Live Elevation API - Very high elevation, excellent stability')
-            elif elev > 2000:
-                result = (4.0, elev, 'Live Elevation API - Alpine elevation, access costs high')
-            elif 20 <= elev < 50:
-                result = (3.5, elev, 'Live Elevation API - Moderate elevation')
-            elif 0 <= elev < 20:
-                result = (2.0, elev, 'Live Elevation API - Low elevation, flood risk')
-            else:
-                result = (3.0, elev, 'Live Elevation API - Sub-surface point')
-            st.session_state.elevation_cache[cache_key] = result
-            return result
-        except Exception:
-            lat, lon = location.lat, location.lon
-            if self.region == "borneo":
-                if 5.8 < lat < 6.2 and 116.4 < lon < 116.8:
-                    result = (5.0, 1500, 'Fallback: Kinabalu region - excellent underground site')
-                elif lat > 4.5 and lon > 117.5:
-                    result = (4.0, 300, 'Fallback: E. Sabah hills - good underground site')
-                elif 2.5 < lat and 114.0 < lon < 115.5:
-                    result = (4.5, 200, 'Fallback: Sarawak interior - good underground site')
-                elif lat > 5.0 and 115.0 < lon < 117.0:
-                    result = (4.5, 800, 'Fallback: Crocker Range - excellent underground site')
-                else:
-                    result = (3.5, 50, 'Fallback: Lowland area')
-            else:
-                if 3.3 < lat < 4.7 and 101.3 < lon < 101.9:
-                    result = (4.5, 1200, 'Fallback: Titiwangsa highlands - excellent underground site')
-                elif lat > 4.5 and 101.5 < lon < 102.5:
-                    result = (3.5, 250, 'Fallback: Kelantan interior - moderate site')
-                elif 3.5 < lat < 4.6 and 101.9 < lon < 102.8:
-                    result = (3.5, 300, 'Fallback: Pahang interior - moderate site')
-                elif lat < 2.5 and 102.5 < lon < 103.8:
-                    result = (3.0, 80, 'Fallback: Johor interior')
-                else:
-                    result = (3.0, 30, 'Fallback: Coastal lowland')
-            st.session_state.elevation_cache[cache_key] = result
-            return result
+        """🔧 v5.2.0: uses multi-provider cached elevation; falls back to heuristic."""
+        cached = _get_elevation_cached(location.lat, location.lon)
+        if cached.get('live') and cached.get('elev') is not None:
+            return (cached['score'], cached['elev'], cached['label'])
+        # All 3 providers failed → use geographic heuristic
+        return _geographic_elevation_fallback(location.lat, location.lon, self.region)
 
     def _estimate_bedrock_depth(self, location: Location) -> tuple:
         lat, lon = location.lat, location.lon
@@ -3431,6 +3461,7 @@ def render_sidebar(region):
             api_cache.clear()
             st.session_state.elevation_cache = {}
             _slope_lookup_cached.clear()
+            _get_elevation_cached.clear()
             st.success("Cache cleared!"); st.rerun()
         st.divider()
         st.markdown("""<div style="color: #00f0ff; font-family: 'Courier New', monospace; 
@@ -4489,7 +4520,7 @@ def main():
     st.markdown(f"""
     <div style="text-align: center; padding: 20px 0 10px 0;">
         <div class="main-title">🏙️ UNDERGROUNDBASE</div>
-        <div class="subtitle">{region_flag} MALAYSIA · SITE SELECTOR v5.1.9</div>
+        <div class="subtitle">{region_flag} MALAYSIA · SITE SELECTOR v5.2.0</div>
         <div style="display: flex; justify-content: center; gap: 10px; margin: 10px 0;">
             <span class="phase-badge phase-badge-2">🔧 PHASE 2</span>
             <span class="phase-badge phase-badge-3">🏗️ PHASE 3</span>
@@ -4584,7 +4615,7 @@ def main():
     <div style="text-align: center; padding: 15px 0; color: #333; font-family: 'Courier New', monospace; 
          font-size: 0.6rem; letter-spacing: 2px;">
         <span style="color: #00f0ff;">[</span> 
-        UNDERGROUNDBASEX v5.1.9 · SLOPE-API-FIX · MULTI-PROVIDER FALLBACK · CACHED LOOKUPS
+        UNDERGROUNDBASEX v5.2.0 · SLOPE + ELEVATION MULTI-PROVIDER · CACHED LOOKUPS
         <span style="color: #00f0ff;">]</span>
     </div>
     <div style="text-align: center; padding: 15px 0;">
