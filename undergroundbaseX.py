@@ -1,14 +1,13 @@
 """
-UndergroundBase v5.2.0
+UndergroundBase v5.2.1
 =======================
-ELEVATION-API-FIX RELEASE (over v5.1.9):
-  1. NEW: _get_elevation_cached() — multi-provider fallback for site elevation
-       Open-Elevation → Open-Meteo → OpenTopoData (same chain as slope)
-  2. _get_elevation_quick() now delegates to the cached function
-  3. Elevation now counts as a LIVE source → confidence score rises
-  4. "CLEAR CACHE" button also clears the elevation cache
-  5. Fallback to geographic heuristic ONLY if all 3 providers fail
-All v5.1.9 fixes preserved (multi-provider slope, caching, User-Agent headers).
+CONFIDENCE-FIX RELEASE (over v5.2.0):
+  1. FIXED: _get_elevation_cached() 'label' now includes "(Live)" so the
+     confidence scorer counts elevation as a live source
+  2. Result: data_confidence rises from 25% → 45% when elevation is live
+  3. Confidence range narrows honestly (±26.2% → ±19.2%)
+  4. Score itself unchanged — weighted math untouched
+All v5.2.0 fixes preserved (multi-provider elevation + slope, caching, UA headers).
 """
 
 import streamlit as st
@@ -1583,11 +1582,11 @@ def nearest_fault(lat, lon):
     return best
 
 # ============================================================================
-# 🔧 ELEVATION + SLOPE API — v5.2.0 MULTI-PROVIDER FALLBACK
+# 🔧 ELEVATION + SLOPE API — v5.2.1 MULTI-PROVIDER FALLBACK
 # ============================================================================
 
 _ELEV_UA = {
-    "User-Agent": "Mozilla/5.0 (compatible; UndergroundBase/5.2.0; +https://streamlit.io)",
+    "User-Agent": "Mozilla/5.0 (compatible; UndergroundBase/5.2.1; +https://streamlit.io)",
     "Accept": "application/json",
 }
 
@@ -1688,9 +1687,13 @@ def _score_elevation(elev_m: float) -> tuple:
 @st.cache_data(ttl=3600, show_spinner=False)
 def _get_elevation_cached(lat: float, lon: float) -> Dict:
     """
-    🔧 v5.2.0: cached site elevation — survives Streamlit reruns.
+    🔧 v5.2.1: cached site elevation — survives Streamlit reruns.
     Tries Open-Elevation → Open-Meteo → OpenTopoData.
     Returns {'elev': float, 'score': float, 'label': str, 'source': str, 'live': bool}.
+
+    FIX: 'label' now includes "(Live)" so the confidence scorer's
+    `'Live' in elev_source` substring check succeeds and elevation
+    counts as a live source in data_confidence.
     """
     points = [(lat, lon)]
 
@@ -1703,7 +1706,8 @@ def _get_elevation_cached(lat: float, lon: float) -> Dict:
                 return {
                     'elev': elev_m,
                     'score': score,
-                    'label': f'{provider_name} - {label}',
+                    # 🔧 FIX: include "(Live)" so the confidence detector sees it
+                    'label': f'{provider_name} (Live) - {label}',
                     'source': f'{provider_name} (Live)',
                     'live': True,
                 }
@@ -1723,7 +1727,7 @@ def _get_elevation_cached(lat: float, lon: float) -> Dict:
 @st.cache_data(ttl=3600, show_spinner=False)
 def _slope_lookup_cached(lat: float, lon: float) -> Dict:
     """
-    🔧 v5.1.9/v5.2.0: cached slope lookup — survives Streamlit reruns.
+    🔧 v5.1.9/v5.2.1: cached slope lookup — survives Streamlit reruns.
     Tries Open-Elevation → Open-Meteo → OpenTopoData.
     """
     d = 0.005
@@ -1776,7 +1780,7 @@ def _slope_lookup_cached(lat: float, lon: float) -> Dict:
 
 
 def estimate_slope(lat: float, lon: float) -> Dict:
-    """🔧 v5.2.0: thin wrapper — the real work is cached by st.cache_data."""
+    """🔧 v5.2.1: thin wrapper — the real work is cached by st.cache_data."""
     try:
         return _slope_lookup_cached(lat, lon)
     except Exception:
@@ -1814,7 +1818,7 @@ def _geographic_elevation_fallback(lat: float, lon: float, region: str) -> tuple
             return (3.0, 30, 'Fallback: Coastal lowland')
 
 # ============================================================================
-# [END ELEVATION + SLOPE FIX — rest of file unchanged from v5.1.9]
+# [END ELEVATION + SLOPE FIX — rest of file unchanged from v5.2.0]
 # ============================================================================
 
 def estimate_groundwater_quality(lat, lon, region):
@@ -2058,7 +2062,7 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
         return f"Underground City Suitability Analysis ({self.region.upper()} + USGS + OneGeology)"
 
     def _get_elevation_quick(self, location: Location) -> tuple:
-        """🔧 v5.2.0: uses multi-provider cached elevation; falls back to heuristic."""
+        """🔧 v5.2.1: uses multi-provider cached elevation; falls back to heuristic."""
         cached = _get_elevation_cached(location.lat, location.lon)
         if cached.get('live') and cached.get('elev') is not None:
             return (cached['score'], cached['elev'], cached['label'])
@@ -4453,8 +4457,9 @@ def render_enhanced_results(complete_plan: Dict):
         for i, q in enumerate(consult_data['survey_questions'][:2]):
             st.write(f"**Q{i+1}:** {q['question']}")
         st.subheader("🏨 Tourism")
+        visitor_total = sum(a['visitors_per_year'] for a in tourism_data['attractions'])
         col1, col2 = st.columns(2)
-        with col1: st.metric("Annual Visitors", f"{sum(a['visitors_per_year'] for a in tourism_data['attractions']):,}")
+        with col1: st.metric("Annual Visitors", f"{visitor_total:,}")
         with col2: st.metric("Jobs Created", tourism_data['jobs_created'])
     with tabs[4]:
         mars_data = complete_plan['phase_5_global']['mars_adaptation']
@@ -4520,7 +4525,7 @@ def main():
     st.markdown(f"""
     <div style="text-align: center; padding: 20px 0 10px 0;">
         <div class="main-title">🏙️ UNDERGROUNDBASE</div>
-        <div class="subtitle">{region_flag} MALAYSIA · SITE SELECTOR v5.2.0</div>
+        <div class="subtitle">{region_flag} MALAYSIA · SITE SELECTOR v5.2.1</div>
         <div style="display: flex; justify-content: center; gap: 10px; margin: 10px 0;">
             <span class="phase-badge phase-badge-2">🔧 PHASE 2</span>
             <span class="phase-badge phase-badge-3">🏗️ PHASE 3</span>
@@ -4615,7 +4620,7 @@ def main():
     <div style="text-align: center; padding: 15px 0; color: #333; font-family: 'Courier New', monospace; 
          font-size: 0.6rem; letter-spacing: 2px;">
         <span style="color: #00f0ff;">[</span> 
-        UNDERGROUNDBASEX v5.2.0 · SLOPE + ELEVATION MULTI-PROVIDER · CACHED LOOKUPS
+        UNDERGROUNDBASEX v5.2.1 · CONFIDENCE-FIX · ELEVATION LIVE · CACHED LOOKUPS
         <span style="color: #00f0ff;">]</span>
     </div>
     <div style="text-align: center; padding: 15px 0;">
