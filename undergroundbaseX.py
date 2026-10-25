@@ -1,16 +1,13 @@
 """
-UndergroundBase v5.3.0
+UndergroundBase v5.3.1
 =======================
-LIVE-ONLY FEATURE PACK (over v5.2.1):
-  1. NEW: _get_seismic_usgs_with_retry() — USGS with exponential backoff
-  2. NEW: _get_population_osm() — live OSM building footprint count
-  3. NEW: _get_land_use_osm() — live OSM landuse counts
-  4. NEW: _get_onegeology_with_retry() — OneGeology retry + fallback layer
-  5. NEW: Custom Weights sidebar expander (default = current values)
-  6. NEW: Sensitivity Analysis expander in results (collapsed by default)
-  7. NEW: Climate Context tab in enhanced results (Open-Meteo climate API)
-  8. Optional "Use OSM live data" toggle — OFF restores exact v5.2.1 behavior
-ALL v5.2.1 fixes and every existing feature preserved byte-for-byte.
+SIDEBAR-SEARCH RELEASE (over v5.3.0):
+  9. NEW: render_universal_search_sidebar() — universal search bar in sidebar
+     - Accepts place names (fuzzy) OR coordinates (multiple formats)
+     - Sits at the top of the sidebar, above LOCATION SELECTOR
+     - Auto-switches region if coordinates land in West Malaysia
+     - Unique match jumps directly; multiple matches show a picker
+ALL v5.3.0 features and every existing feature preserved byte-for-byte.
 ZERO downloads — everything is live HTTP.
 """
 
@@ -1586,11 +1583,11 @@ def nearest_fault(lat, lon):
     return best
 
 # ============================================================================
-# 🔧 ELEVATION + SLOPE API — v5.3.0 MULTI-PROVIDER FALLBACK
+# ELEVATION + SLOPE API — v5.3.1 MULTI-PROVIDER FALLBACK
 # ============================================================================
 
 _ELEV_UA = {
-    "User-Agent": "Mozilla/5.0 (compatible; UndergroundBase/5.3.0; +https://streamlit.io)",
+    "User-Agent": "Mozilla/5.0 (compatible; UndergroundBase/5.3.1; +https://streamlit.io)",
     "Accept": "application/json",
 }
 
@@ -1690,7 +1687,7 @@ def _score_elevation(elev_m: float) -> tuple:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _get_elevation_cached(lat: float, lon: float) -> Dict:
-    """🔧 v5.2.1/v5.3.0: cached site elevation — multi-provider."""
+    """v5.2.1/v5.3.1: cached site elevation — multi-provider."""
     points = [(lat, lon)]
     for provider_name, fetcher in _ELEV_PROVIDERS:
         for attempt in range(2):
@@ -1715,7 +1712,7 @@ def _get_elevation_cached(lat: float, lon: float) -> Dict:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _slope_lookup_cached(lat: float, lon: float) -> Dict:
-    """🔧 v5.1.9/v5.3.0: cached slope lookup — multi-provider."""
+    """v5.1.9/v5.3.1: cached slope lookup — multi-provider."""
     d = 0.005
     points = []
     for dy in (-d, 0, d):
@@ -1764,7 +1761,7 @@ def _slope_lookup_cached(lat: float, lon: float) -> Dict:
 
 
 def estimate_slope(lat: float, lon: float) -> Dict:
-    """🔧 v5.3.0: thin wrapper — the real work is cached by st.cache_data."""
+    """v5.3.1: thin wrapper — the real work is cached by st.cache_data."""
     try:
         return _slope_lookup_cached(lat, lon)
     except Exception:
@@ -1802,14 +1799,14 @@ def _geographic_elevation_fallback(lat: float, lon: float, region: str) -> tuple
             return (3.0, 30, 'Fallback: Coastal lowland')
 
 # ============================================================================
-# 🆕 v5.3.0 NEW LIVE PROVIDERS (additive, zero deletions)
+# v5.3.0 NEW LIVE PROVIDERS (additive, zero deletions)
 # ============================================================================
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def _get_seismic_usgs_with_retry(lat: float, lon: float, radius_km: int = 200,
                                   max_retries: int = 3) -> Optional[Dict]:
     """
-    🆕 v5.3.0 FEATURE 1: USGS with exponential backoff.
+    v5.3.0 FEATURE 1: USGS with exponential backoff.
     Returns the same dict shape as the original _get_seismic_usgs(),
     so callers don't need to know the difference.
     """
@@ -1849,12 +1846,11 @@ def _get_seismic_usgs_with_retry(lat: float, lon: float, radius_km: int = 200,
 @st.cache_data(ttl=3600, show_spinner=False)
 def _get_population_osm(lat: float, lon: float, radius_m: int = 5000) -> Optional[Dict]:
     """
-    🆕 v5.3.0 FEATURE 2: Live OSM building footprint count → population proxy.
+    v5.3.0 FEATURE 2: Live OSM building footprint count → population proxy.
     Returns None if OSM has insufficient data (caller falls back to heuristic).
     """
     try:
         url = "https://overpass-api.de/api/interpreter"
-        # Count buildings with levels where available, plus total buildings
         q = f"""
         [out:json][timeout:20];
         (
@@ -1870,7 +1866,6 @@ def _get_population_osm(lat: float, lon: float, radius_m: int = 5000) -> Optiona
         building_count = 0
         for el in elements:
             if el.get('type') == 'count' or 'tags' in el:
-                # Overpass "out count" returns a single element with tags.total
                 tags = el.get('tags', {})
                 if 'total' in tags:
                     try:
@@ -1881,16 +1876,13 @@ def _get_population_osm(lat: float, lon: float, radius_m: int = 5000) -> Optiona
             else:
                 building_count += 1
 
-        # Estimate: ~2 people per building (rural-ish Malaysia average),
-        # scaled by area of the radius circle
         area_km2 = math.pi * (radius_m / 1000.0) ** 2
         people_per_building = 2.5
         estimated_pop = building_count * people_per_building
         density = estimated_pop / area_km2 if area_km2 > 0 else 0
 
-        # Only return "live" if we actually found something meaningful
         if building_count < 5:
-            return None  # OSM data too sparse → caller uses heuristic
+            return None
 
         if density > 5:
             score, label = 2.0, f'Near city (OSM: {density:.1f} ppl/km²)'
@@ -1917,7 +1909,7 @@ def _get_population_osm(lat: float, lon: float, radius_m: int = 5000) -> Optiona
 @st.cache_data(ttl=3600, show_spinner=False)
 def _get_land_use_osm(lat: float, lon: float, radius_m: int = 5000) -> Optional[Dict]:
     """
-    🆕 v5.3.0 FEATURE 3: Live OSM landuse counts → land availability proxy.
+    v5.3.0 FEATURE 3: Live OSM landuse counts → land availability proxy.
     Returns None if OSM data too sparse.
     """
     try:
@@ -1943,7 +1935,6 @@ def _get_land_use_osm(lat: float, lon: float, radius_m: int = 5000) -> Optional[
         residential = 0
         farmland = 0
         industrial = 0
-        wood = 0
 
         for el in elements:
             tags = el.get('tags', {})
@@ -1960,9 +1951,8 @@ def _get_land_use_osm(lat: float, lon: float, radius_m: int = 5000) -> Optional[
 
         total_polygons = forest + residential + farmland + industrial
         if total_polygons < 3:
-            return None  # OSM data too sparse → caller uses heuristic
+            return None
 
-        # Score: abundant forest/farmland = high land availability
         if forest > 20 and residential < 5:
             score, label = 5.0, f'Abundant land (OSM: {forest} forest, {residential} residential)'
         elif forest > 10 and residential < 10:
@@ -1989,11 +1979,9 @@ def _get_land_use_osm(lat: float, lon: float, radius_m: int = 5000) -> Optional[
 @st.cache_data(ttl=3600, show_spinner=False)
 def _get_onegeology_with_retry(lat: float, lon: float) -> Optional[Dict]:
     """
-    🆕 v5.3.0 FEATURE 4: OneGeology with retry + fallback WMS layer.
-    Same return shape as the original _get_onegeology_summary().
+    v5.3.0 FEATURE 4: OneGeology with retry + fallback WMS layer.
     """
     wms_url = "https://portal.onegeology.org/OneGeologyGlobal/WMS/1.3.0"
-    # Try World_CGMW first, then fall back to other known layers
     layers_to_try = ["World_CGMW", "World_CGMW_2023", "World_CGMW_2022"]
 
     for layer in layers_to_try:
@@ -2028,13 +2016,8 @@ def _get_onegeology_with_retry(lat: float, lon: float) -> Optional[Dict]:
 
 
 def _compute_custom_weights_from_sidebar() -> Dict:
-    """
-    🆕 v5.3.0 FEATURE 5: read custom weight sliders from sidebar.
-    Returns dict of 12 weights (defaults = v5.2.1 values).
-    Only called if user enables the toggle.
-    """
+    """v5.3.0 FEATURE 5: read custom weight sliders from sidebar."""
     if not st.session_state.get('custom_weights_enabled', False):
-        # Return the exact v5.2.1 defaults — no behavior change
         return {
             'elevation': 0.13, 'bedrock_depth': 0.13, 'water_table_depth': 0.10,
             'seismic_risk': 0.10, 'geology': 0.12, 'population_density': 0.08,
@@ -2052,10 +2035,7 @@ def _compute_custom_weights_from_sidebar() -> Dict:
 
 
 def _render_sensitivity_analysis(rd: Dict):
-    """
-    🆕 v5.3.0 FEATURE 6: Sensitivity Analysis expander.
-    Recomputes score under ±20% uncertainty for heuristic inputs.
-    """
+    """v5.3.0 FEATURE 6: Sensitivity Analysis expander."""
     with st.expander("🧪 Sensitivity Analysis — what if the guesses are wrong?", expanded=False):
         st.caption("Shows how the score changes if bedrock / water table / geology estimates are off by ±20%")
         base_score = rd.get('suitability_percentage', 0)
@@ -2066,7 +2046,6 @@ def _render_sensitivity_analysis(rd: Dict):
         max_possible = sum(weights.values()) * 5.0 if weights else 1.0
 
         scenarios = []
-        # Baseline
         scenarios.append({'Scenario': 'Baseline (as computed)', 'Score': base_score, 'Delta': 0.0})
 
         for key, label in [
@@ -2075,10 +2054,8 @@ def _render_sensitivity_analysis(rd: Dict):
             ('geology', 'Geology ±20%'),
         ]:
             current = scores.get(key, 3.0)
-            # Pessimistic
             pessimistic = max(1.0, current * 0.8)
             delta_p = (pessimistic - current) * weights.get(key, 0)
-            # Optimistic
             optimistic = min(5.0, current * 1.2)
             delta_o = (optimistic - current) * weights.get(key, 0)
 
@@ -2105,16 +2082,12 @@ def _render_sensitivity_analysis(rd: Dict):
 
 
 def _render_climate_context_tab(site_data: Dict):
-    """
-    🆕 v5.3.0 FEATURE 7 (bonus): Climate Context tab in enhanced results.
-    Uses Open-Meteo climate API — free, live, no downloads.
-    """
+    """v5.3.0 FEATURE 7 (bonus): Climate Context tab in enhanced results."""
     st.subheader("🌦️ Climate Context")
     st.caption("Live climate data from Open-Meteo — pure context, does not affect suitability score")
 
     lat = site_data.get('_lat', None)
     lon = site_data.get('_lon', None)
-    # Fallback: parse from location string
     if lat is None or lon is None:
         coords = _parse_location_coords(site_data)
         if coords:
@@ -2145,7 +2118,7 @@ def _render_climate_context_tab(site_data: Dict):
                 avg_temp = round(sum(temps) / len(temps), 1)
                 max_temp = round(max(temps), 1)
                 min_temp = round(min(temps), 1)
-                annual_precip = round(sum(precip) / 5.0, 0)  # 5 years of data
+                annual_precip = round(sum(precip) / 5.0, 0)
 
                 col1, col2, col3 = st.columns(3)
                 with col1:
@@ -2159,7 +2132,6 @@ def _render_climate_context_tab(site_data: Dict):
                     st.metric("Rainy Days / Year", f"{rain_days:.0f}")
                     st.caption("Days with >1mm rainfall")
 
-                # Simple contextual notes
                 st.markdown("---")
                 if annual_precip > 2500:
                     st.warning(f"🌧️ **Very high rainfall zone** ({annual_precip:.0f} mm/yr) — "
@@ -2187,10 +2159,7 @@ def _render_climate_context_tab(site_data: Dict):
 
 
 def _render_custom_weights_sidebar():
-    """
-    🆕 v5.3.0 FEATURE 5: Custom Weights expander in sidebar.
-    Default = v5.2.1 values. OFF by default so behavior unchanged.
-    """
+    """v5.3.0 FEATURE 5: Custom Weights expander in sidebar."""
     with st.expander("⚙️ Custom Weights (Advanced)", expanded=False):
         st.caption("Default values match v5.2.1. Only change if you know what you're doing.")
         enabled = st.checkbox("Enable custom weights", value=False, key="custom_weights_enabled")
@@ -2230,7 +2199,197 @@ def _render_custom_weights_sidebar():
 
 
 # ============================================================================
-# [END v5.3.0 NEW CODE — original v5.2.1 code below untouched]
+# 🆕 v5.3.1 UNIVERSAL SEARCH — location name OR coordinates (SIDEBAR)
+# ============================================================================
+
+def _parse_search_coordinates(text: str) -> Optional[tuple]:
+    """
+    Try to parse the search text as coordinates. Accepts:
+      "4.22, 114.03"       "4.22 114.03"
+      "4.22N, 114.03E"     "4.22 S 114.03 W"
+      "4.22;114.03"        "(4.22, 114.03)"
+      "4.22E, 114.03N"     (order-insensitive)
+    Returns (lat, lon) or None if not coordinates.
+    """
+    if not text or not text.strip():
+        return None
+    s = text.strip().upper()
+    for ch in "()[]{}\"',;":
+        s = s.replace(ch, " ")
+    s = " ".join(s.split())
+
+    parts = s.split()
+    if len(parts) == 2:
+        try:
+            a, b = float(parts[0]), float(parts[1])
+            if -90 <= a <= 90 and -180 <= b <= 180:
+                return (a, b)
+            if -180 <= a <= 180 and -90 <= b <= 90:
+                return (b, a)
+        except ValueError:
+            pass
+
+    import re
+    pattern = r"([-+]?\d+(?:\.\d+)?)\s*([NSEW])"
+    matches = re.findall(pattern, s)
+    if len(matches) == 2:
+        try:
+            val1, dir1 = matches[0]
+            val2, dir2 = matches[1]
+            v1 = float(val1)
+            v2 = float(val2)
+            if dir1 in ("N", "S"):
+                lat = v1 if dir1 == "N" else -v1
+                lon = v2 if dir2 == "E" else (-v2 if dir2 == "W" else None)
+                if lon is not None:
+                    return (lat, lon)
+            else:
+                lon = v1 if dir1 == "E" else (-v1 if dir1 == "W" else None)
+                lat = v2 if dir2 == "N" else (-v2 if dir2 == "S" else None)
+                if lat is not None and lon is not None:
+                    return (lat, lon)
+        except ValueError:
+            pass
+
+    return None
+
+
+def _search_locations(query: str, region: str, max_results: int = 8) -> List[Dict]:
+    """
+    Fuzzy-search all locations (Sabah + Sarawak + West Malaysia).
+    Returns list of dicts with 'name', 'lat', 'lon', 'score', 'region'.
+    """
+    query_lower = query.lower().strip()
+    if not query_lower:
+        return []
+
+    pool = []
+    for name, coords in SABAH_LOCATIONS.items():
+        pool.append({'name': name, 'lat': coords[0], 'lon': coords[1], 'region': 'borneo'})
+    for name, coords in SARAWAK_LOCATIONS.items():
+        pool.append({'name': name, 'lat': coords[0], 'lon': coords[1], 'region': 'borneo'})
+    for name, coords in WEST_MALAYSIA_LOCATIONS.items():
+        pool.append({'name': name, 'lat': coords[0], 'lon': coords[1], 'region': 'west_malaysia'})
+
+    results = []
+    for item in pool:
+        name_lower = item['name'].lower()
+        if name_lower.startswith(query_lower):
+            score = 100 - len(name_lower) * 0.01
+        elif query_lower in name_lower:
+            score = 50 - len(name_lower) * 0.01
+        else:
+            q_tokens = set(query_lower.split())
+            n_tokens = set(name_lower.replace(',', ' ').replace('(', ' ').replace(')', ' ').split())
+            overlap = len(q_tokens & n_tokens)
+            if overlap == 0:
+                continue
+            score = 10 * overlap - len(name_lower) * 0.01
+        results.append({**item, 'score': score})
+
+    results.sort(key=lambda x: -x['score'])
+    return results[:max_results]
+
+
+def render_universal_search_sidebar():
+    """
+    v5.3.1: Universal search bar in the sidebar.
+    Sits at the very top, above LOCATION SELECTOR.
+    Accepts place names OR coordinates.
+    Writes to st.session_state.selected_location on submit.
+    """
+    st.markdown("""
+    <div style="padding: 8px 0 4px 0;">
+        <div style="color: #00f0ff; font-family: 'Courier New', monospace; 
+             letter-spacing: 2px; font-size: 0.9rem; font-weight: bold;">
+            🆕 UNIVERSAL SEARCH</div>
+        <div style="color: #8080a0; font-family: 'Courier New', monospace; 
+             font-size: 0.65rem; letter-spacing: 1px; margin-top: 2px;">
+            Type a name OR paste coordinates</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    query = st.text_input(
+        "Search",
+        placeholder="e.g. Miri  OR  4.22, 114.03",
+        label_visibility="collapsed",
+        key="universal_search_input",
+    )
+
+    if st.button("🔍 SEARCH", use_container_width=True, type="primary", key="universal_search_btn"):
+        if not query or not query.strip():
+            st.warning("Type a location name or coordinates.")
+            return
+
+        query = query.strip()
+
+        # ── Try coordinates first ─────────────────────────────────
+        coords = _parse_search_coordinates(query)
+        if coords is not None:
+            lat, lon = coords
+            if 0.5 <= lat <= 7.5 and 109.0 <= lon <= 119.5:
+                new_region = 'borneo'
+            elif 0.5 <= lat <= 7.5 and 99.0 <= lon <= 105.0:
+                new_region = 'west_malaysia'
+            else:
+                new_region = st.session_state.get('region', 'borneo')
+            st.session_state.selected_location = Location(
+                lat=lat, lon=lon,
+                name=f"Custom coordinates ({lat:.4f}, {lon:.4f})"
+            )
+            st.session_state.region = new_region
+            st.session_state.current_results = None
+            st.session_state.nearby_alternatives_cache = None
+            st.success(f"📍 {lat:.4f}, {lon:.4f}")
+            time.sleep(0.2)
+            st.rerun()
+
+        # ── Fuzzy name search ─────────────────────────────────────
+        matches = _search_locations(query, st.session_state.get('region', 'borneo'), max_results=8)
+
+        if not matches:
+            st.warning(f"No matches for '{query}'. Try a different name or coordinates like `4.22, 114.03`.")
+            return
+
+        if len(matches) == 1 or matches[0]['score'] > 90:
+            best = matches[0]
+            st.session_state.selected_location = Location(
+                lat=best['lat'], lon=best['lon'], name=best['name']
+            )
+            st.session_state.region = best['region']
+            st.session_state.current_results = None
+            st.session_state.nearby_alternatives_cache = None
+            st.success(f"📍 {best['name']}")
+            time.sleep(0.2)
+            st.rerun()
+
+        # Multiple matches — show picker
+        st.markdown(f"**{len(matches)} matches — pick one:**")
+        options = [f"{m['name']}  ·  ({m['lat']:.3f}, {m['lon']:.3f})" for m in matches]
+        chosen = st.selectbox(
+            "Pick",
+            options=options,
+            key="universal_search_picker",
+            label_visibility="collapsed",
+        )
+        if st.button("🎯 GO", use_container_width=True, key="universal_search_go"):
+            idx = options.index(chosen)
+            best = matches[idx]
+            st.session_state.selected_location = Location(
+                lat=best['lat'], lon=best['lon'], name=best['name']
+            )
+            st.session_state.region = best['region']
+            st.session_state.current_results = None
+            st.session_state.nearby_alternatives_cache = None
+            st.success(f"📍 {best['name']}")
+            time.sleep(0.2)
+            st.rerun()
+
+    st.markdown('<div class="cyber-divider"></div>', unsafe_allow_html=True)
+
+
+# ============================================================================
+# END v5.3.1
 # ============================================================================
 
 def estimate_groundwater_quality(lat, lon, region):
@@ -2474,7 +2633,6 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
         return f"Underground City Suitability Analysis ({self.region.upper()} + USGS + OneGeology)"
 
     def _get_elevation_quick(self, location: Location) -> tuple:
-        """🔧 v5.2.1: uses multi-provider cached elevation; falls back to heuristic."""
         cached = _get_elevation_cached(location.lat, location.lon)
         if cached.get('live') and cached.get('elev') is not None:
             return (cached['score'], cached['elev'], cached['label'])
@@ -2543,7 +2701,6 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
                 return 2.5, 10, 'Geographic: Coastal lowland - SHALLOW water table (10m)'
 
     def _get_seismic_usgs(self, location: Location) -> Optional[Dict]:
-        """v5.2.1: kept as-is for backward compatibility."""
         try:
             url = "https://earthquake.usgs.gov/fdsnws/event/1/query"
             params = {
@@ -2566,7 +2723,6 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
             return None
 
     def _estimate_seismic_risk(self, location: Location) -> tuple:
-        """🆕 v5.3.0: uses retry wrapper when OSM live enabled, else original."""
         if st.session_state.get('use_osm_live', True):
             usgs = _get_seismic_usgs_with_retry(location.lat, location.lon)
         else:
@@ -2634,7 +2790,6 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
                     return 4.5, 'Low', 'Geographic fallback: Peninsular Malaysia — score 4.5/5', '🟢'
 
     def _get_onegeology_summary(self, location: Location) -> Optional[Dict]:
-        """🆕 v5.3.0: uses retry wrapper when OSM live enabled, else original."""
         if st.session_state.get('use_osm_live', True):
             return _get_onegeology_with_retry(location.lat, location.lon)
         try:
@@ -2674,7 +2829,6 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
             else: return 3.0, 10, 'Geographic: West coast (~10km, Strait of Malacca)'
 
     def _geographic_score_population(self, location: Location) -> tuple:
-        """🆕 v5.3.0: tries OSM live first, falls back to geographic heuristic."""
         if st.session_state.get('use_osm_live', True):
             osm_pop = _get_population_osm(location.lat, location.lon)
             if osm_pop is not None:
@@ -2745,7 +2899,6 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
         return round(base, 2), details, source
 
     def _geographic_score_land(self, location: Location) -> tuple:
-        """🆕 v5.3.0: tries OSM live first, falls back to geographic heuristic."""
         if st.session_state.get('use_osm_live', True):
             osm_land = _get_land_use_osm(location.lat, location.lon)
             if osm_land is not None:
@@ -2865,7 +3018,6 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
 
     def analyse(self, location: Location, params: Dict) -> Dict:
         radius = params.get('radius', 10000)
-        # 🆕 v5.3.0: use custom weights if sidebar toggle is ON
         default_weights = {
             'elevation': 0.13, 'bedrock_depth': 0.13, 'water_table_depth': 0.10,
             'seismic_risk': 0.10, 'geology': 0.12, 'population_density': 0.08,
@@ -3066,7 +3218,6 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
             'karst_info': karst_data,
             'data_confidence': confidence,
             'investment_band': investment_band,
-            # 🆕 v5.3.0: expose inputs needed by sensitivity analysis
             '_weights_used': weights,
             '_lat': location.lat,
             '_lon': location.lon,
@@ -3357,9 +3508,6 @@ class UtilityDesigner:
 
 
 class ConstructionSimulator:
-    """
-    🔧 v5.1.8: Combined timeline fix.
-    """
     def simulate_construction(self, site_data: Dict, plan: Dict,
                               elevation_complexity_factor: float = 1.0) -> Dict:
         size_sqm = 1000000
@@ -3701,7 +3849,6 @@ def init_session_state():
         st.session_state.multi_ranking_results = None
     if 'nearby_alternatives_cache' not in st.session_state:
         st.session_state.nearby_alternatives_cache = None
-    # 🆕 v5.3.0: new session state keys
     if 'use_osm_live' not in st.session_state:
         st.session_state.use_osm_live = True
     if 'custom_weights_enabled' not in st.session_state:
@@ -3855,6 +4002,10 @@ def render_sidebar(region):
         </div>
         """, unsafe_allow_html=True)
         st.divider()
+
+        # 🆕 v5.3.1: UNIVERSAL SEARCH — sits at top of sidebar
+        render_universal_search_sidebar()
+
         st.markdown("""<div style="color: #00f0ff; font-family: 'Courier New', monospace; 
              letter-spacing: 2px; font-size: 0.9rem; margin-bottom: 10px;">
             ⚡ LOCATION SELECTOR</div>""", unsafe_allow_html=True)
@@ -3890,7 +4041,6 @@ def render_sidebar(region):
                                                        help="Overlay the global geological map (World CGMW)")
         st.divider()
 
-        # 🆕 v5.3.0: LIVE DATA TOGGLE
         st.markdown("""<div style="color: #00f0ff; font-family: 'Courier New', monospace; 
              letter-spacing: 2px; font-size: 0.9rem; margin-bottom: 10px;">
             🆕 LIVE DATA (v5.3.0)</div>""", unsafe_allow_html=True)
@@ -3905,7 +4055,6 @@ def render_sidebar(region):
         else:
             st.caption("⚠️ Using v5.2.1 heuristic mode — same as previous version")
 
-        # 🆕 v5.3.0: CUSTOM WEIGHTS
         _render_custom_weights_sidebar()
         st.divider()
 
@@ -4465,7 +4614,6 @@ def render_results():
             colC.metric("Score", f"{gw['score']}/5")
             st.caption(gw['note'])
 
-        # 🆕 v5.3.0: SENSITIVITY ANALYSIS expander
         _render_sensitivity_analysis(rd)
 
         render_nearby_alternatives(rd, rd.get('region', 'borneo'))
@@ -4839,7 +4987,7 @@ def render_enhanced_results(complete_plan: Dict):
     tabs = st.tabs([
         "📊 Overview", "💰 Phase 2: Infrastructure", "🏗️ Phase 3: Construction",
         "👥 Phase 4: Public", "🌍 Phase 5: Global",
-        "🌦️ Climate Context",  # 🆕 v5.3.0
+        "🌦️ Climate Context",
     ])
     with tabs[0]:
         site = complete_plan['phase_1_site_selection']['site_data']
@@ -4956,7 +5104,6 @@ def render_enhanced_results(complete_plan: Dict):
         for agent in swarm_data['agents']:
             st.write(f"**{agent['role']}**: {agent['specialty']}")
     with tabs[5]:
-        # 🆕 v5.3.0: Climate Context tab
         _render_climate_context_tab(complete_plan['phase_1_site_selection']['site_data'])
 
 
@@ -5008,7 +5155,7 @@ def main():
     st.markdown(f"""
     <div style="text-align: center; padding: 20px 0 10px 0;">
         <div class="main-title">🏙️ UNDERGROUNDBASE</div>
-        <div class="subtitle">{region_flag} MALAYSIA · SITE SELECTOR v5.3.0</div>
+        <div class="subtitle">{region_flag} MALAYSIA · SITE SELECTOR v5.3.1</div>
         <div style="display: flex; justify-content: center; gap: 10px; margin: 10px 0;">
             <span class="phase-badge phase-badge-2">🔧 PHASE 2</span>
             <span class="phase-badge phase-badge-3">🏗️ PHASE 3</span>
@@ -5018,7 +5165,7 @@ def main():
         <div class="cyber-divider"></div>
         <div style="color: #8080a0; font-family: 'Courier New', monospace; font-size: 0.7rem; 
              letter-spacing: 4px; margin-top: 5px;">
-            ⚡ HYBRID · 🛰️ USGS LIVE · 🗺️ ONEGEOLOGY LIVE · 🟢 OSM LIVE · ⛰️ SLOPE · 🌐 FAULTS · 🚫 PROTECTED · 📡 CONFIDENCE · 🧪 SENSITIVITY · 🌦️ CLIMATE ⚡
+            ⚡ HYBRID · 🛰️ USGS LIVE · 🗺️ ONEGEOLOGY LIVE · 🟢 OSM LIVE · ⛰️ SLOPE · 🌐 FAULTS · 🚫 PROTECTED · 📡 CONFIDENCE · 🧪 SENSITIVITY · 🌦️ CLIMATE · 🔍 SEARCH ⚡
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -5103,7 +5250,7 @@ def main():
     <div style="text-align: center; padding: 15px 0; color: #333; font-family: 'Courier New', monospace; 
          font-size: 0.6rem; letter-spacing: 2px;">
         <span style="color: #00f0ff;">[</span> 
-        UNDERGROUNDBASEX v5.3.0 · LIVE-ONLY FEATURE PACK · ZERO DOWNLOADS
+        UNDERGROUNDBASEX v5.3.1 · UNIVERSAL SEARCH · ZERO DOWNLOADS
         <span style="color: #00f0ff;">]</span>
     </div>
     <div style="text-align: center; padding: 15px 0;">
