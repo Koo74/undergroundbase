@@ -1,14 +1,12 @@
 """
-UndergroundBase v5.3.1
+UndergroundBase v5.3.2
 =======================
-SIDEBAR-SEARCH RELEASE (over v5.3.0):
-  9. NEW: render_universal_search_sidebar() — universal search bar in sidebar
-     - Accepts place names (fuzzy) OR coordinates (multiple formats)
-     - Sits at the top of the sidebar, above LOCATION SELECTOR
-     - Auto-switches region if coordinates land in West Malaysia
-     - Unique match jumps directly; multiple matches show a picker
-ALL v5.3.0 features and every existing feature preserved byte-for-byte.
-ZERO downloads — everything is live HTTP.
+SEARCH FIX RELEASE (over v5.3.1):
+  10. FIXED: Universal search now uses OpenStreetMap Nominatim API.
+      - You can now type ANY address, mall, or place in Malaysia (e.g. "Ampang, Selangor").
+      - It will automatically find the GPS coordinates and drop a pin.
+      - Fallback to local dictionary is still preserved for speed.
+ALL v5.3.1 features and every existing feature preserved byte-for-byte.
 """
 
 import streamlit as st
@@ -2254,6 +2252,35 @@ def _parse_search_coordinates(text: str) -> Optional[tuple]:
     return None
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _geocode_location(address: str) -> Optional[Dict]:
+    """Uses OpenStreetMap Nominatim API to find ANY location in Malaysia."""
+    try:
+        url = "https://nominatim.openstreetmap.org/search"
+        params = {
+            "q": address,
+            "format": "json",
+            "limit": 1,
+            "countrycodes": "my", # Restrict to Malaysia
+            "addressdetails": 1
+        }
+        headers = {"User-Agent": "UndergroundBaseApp/1.0"}
+        r = requests.get(url, params=params, headers=headers, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            if data and len(data) > 0:
+                res = data[0]
+                return {
+                    "name": res.get("display_name", address),
+                    "lat": float(res["lat"]),
+                    "lon": float(res["lon"]),
+                    "region": "west_malaysia" if float(res["lon"]) < 109.0 else "borneo"
+                }
+    except Exception:
+        pass
+    return None
+
+
 def _search_locations(query: str, region: str, max_results: int = 8) -> List[Dict]:
     """
     Fuzzy-search all locations (Sabah + Sarawak + West Malaysia).
@@ -2344,12 +2371,27 @@ def render_universal_search_sidebar():
             time.sleep(0.2)
             st.rerun()
 
-        # ── Fuzzy name search ─────────────────────────────────────
+        # ── 1. Try Fuzzy search in local database first ───────────
         matches = _search_locations(query, st.session_state.get('region', 'borneo'), max_results=8)
 
+        # ── 2. If no local match, use OpenStreetMap Geocoding ─────
         if not matches:
-            st.warning(f"No matches for '{query}'. Try a different name or coordinates like `4.22, 114.03`.")
-            return
+            with st.spinner("Searching map database..."):
+                geo_result = _geocode_location(query)
+                
+            if geo_result:
+                st.session_state.selected_location = Location(
+                    lat=geo_result['lat'], lon=geo_result['lon'], name=geo_result['name']
+                )
+                st.session_state.region = geo_result['region']
+                st.session_state.current_results = None
+                st.session_state.nearby_alternatives_cache = None
+                st.success(f"📍 Found: {geo_result['name'][:40]}...")
+                time.sleep(0.5)
+                st.rerun()
+            else:
+                st.warning(f"Could not find '{query}'. Try adding 'Malaysia' or a state name (e.g., 'Ampang, Selangor').")
+                return
 
         if len(matches) == 1 or matches[0]['score'] > 90:
             best = matches[0]
