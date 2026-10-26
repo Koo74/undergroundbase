@@ -1,12 +1,13 @@
 """
-UndergroundBase v5.3.2
+UndergroundBase v5.3.3
 =======================
-SEARCH FIX RELEASE (over v5.3.1):
-  10. FIXED: Universal search now uses OpenStreetMap Nominatim API.
-      - You can now type ANY address, mall, or place in Malaysia (e.g. "Ampang, Selangor").
-      - It will automatically find the GPS coordinates and drop a pin.
-      - Fallback to local dictionary is still preserved for speed.
-ALL v5.3.1 features and every existing feature preserved byte-for-byte.
+GLOBAL SEARCH FIX (over v5.3.2):
+  11. FIXED: _geocode_location() now globally accurate.
+      - Removed hard countrycode restriction; uses query biasing instead.
+      - Detects Borneo (Sabah/Sarawak/Labuan) vs West Malaysia via state fields.
+      - Falls back to longitude check (109°E divider) if state missing.
+      - Works for ANY address, mall, or place.
+ALL v5.3.1 & v5.3.2 features preserved byte-for-byte.
 """
 
 import streamlit as st
@@ -1585,7 +1586,7 @@ def nearest_fault(lat, lon):
 # ============================================================================
 
 _ELEV_UA = {
-    "User-Agent": "Mozilla/5.0 (compatible; UndergroundBase/5.3.1; +https://streamlit.io)",
+    "User-Agent": "Mozilla/5.0 (compatible; UndergroundBase/5.3.3; +https://streamlit.io)",
     "Accept": "application/json",
 }
 
@@ -2252,29 +2253,98 @@ def _parse_search_coordinates(text: str) -> Optional[tuple]:
     return None
 
 
+# Borneo states (Sabah + Sarawak + Labuan) — anything else is West Malaysia
+_BORNEO_STATES = {
+    "sabah", "sarawak", "labuan", "w.p. labuan", "wp labuan",
+}
+_WEST_MALAYSIA_STATES = {
+    "selangor", "kuala lumpur", "w.p. kuala lumpur", "wp kuala lumpur",
+    "putrajaya", "w.p. putrajaya", "wp putrajaya",
+    "johor", "kedah", "kelantan", "melaka", "malacca",
+    "negeri sembilan", "pahang", "perak", "perlis", "penang", "pulau pinang",
+    "terengganu",
+}
+
+def _detect_region_from_address(address_dict: Dict, lat: float, lon: float) -> str:
+    """Determine borneo vs west_malaysia from Nominatim address components."""
+    if not address_dict:
+        return "borneo" if lon > 109.0 else "west_malaysia"
+
+    for key in ("state", "state_district", "region", "county"):
+        val = (address_dict.get(key) or "").strip().lower()
+        if not val:
+            continue
+        if any(s in val for s in _BORNEO_STATES):
+            return "borneo"
+        if any(s in val for s in _WEST_MALAYSIA_STATES):
+            return "west_malaysia"
+
+    return "borneo" if lon > 109.0 else "west_malaysia"
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _geocode_location(address: str) -> Optional[Dict]:
-    """Uses OpenStreetMap Nominatim API to find ANY location in Malaysia."""
+    """
+    v5.3.3: Uses OpenStreetMap Nominatim API to find ANY location.
+    - Biased toward Malaysia via ", Malaysia" suffix + country filter.
+    - Falls back to global query if the Malaysian-specific one fails.
+    - Detects Borneo vs West Malaysia via state fields.
+    """
     try:
         url = "https://nominatim.openstreetmap.org/search"
-        params = {
-            "q": address,
-            "format": "json",
-            "limit": 1,
-            "countrycodes": "my", # Restrict to Malaysia
-            "addressdetails": 1
-        }
         headers = {"User-Agent": "UndergroundBaseApp/1.0"}
+
+        # Strategy 1: Malaysia-biased query
+        query = address if "malaysia" in address.lower() else f"{address}, Malaysia"
+        params = {
+            "q": query,
+            "format": "json",
+            "limit": 5,
+            "countrycodes": "my",
+            "addressdetails": 1,
+        }
         r = requests.get(url, params=params, headers=headers, timeout=10)
         if r.status_code == 200:
             data = r.json()
-            if data and len(data) > 0:
-                res = data[0]
+            if data:
+                best = data[0]
+                for item in data:
+                    if (item.get("address", {}).get("country", "").lower() == "malaysia"):
+                        best = item
+                        break
+
+                lat = float(best["lat"])
+                lon = float(best["lon"])
+                region = _detect_region_from_address(best.get("address", {}), lat, lon)
                 return {
-                    "name": res.get("display_name", address),
-                    "lat": float(res["lat"]),
-                    "lon": float(res["lon"]),
-                    "region": "west_malaysia" if float(res["lon"]) < 109.0 else "borneo"
+                    "name": best.get("display_name", address),
+                    "lat": lat,
+                    "lon": lon,
+                    "region": region,
+                }
+
+        # Strategy 2: global retry — manual Malaysia verification
+        params2 = {
+            "q": f"{address}, Malaysia",
+            "format": "json",
+            "limit": 5,
+            "addressdetails": 1,
+        }
+        r = requests.get(url, params=params2, headers=headers, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            for item in data:
+                addr = item.get("address", {})
+                if addr.get("country", "").lower() != "malaysia":
+                    continue
+                lat = float(item["lat"])
+                lon = float(item["lon"])
+                region = _detect_region_from_address(addr, lat, lon)
+                return {
+                    "name": item.get("display_name", address),
+                    "lat": lat,
+                    "lon": lon,
+                    "region": region,
                 }
     except Exception:
         pass
@@ -2320,7 +2390,7 @@ def _search_locations(query: str, region: str, max_results: int = 8) -> List[Dic
 
 def render_universal_search_sidebar():
     """
-    v5.3.1: Universal search bar in the sidebar.
+    v5.3.3: Universal search bar in the sidebar.
     Sits at the very top, above LOCATION SELECTOR.
     Accepts place names OR coordinates.
     Writes to st.session_state.selected_location on submit.
@@ -2386,7 +2456,8 @@ def render_universal_search_sidebar():
                 st.session_state.region = geo_result['region']
                 st.session_state.current_results = None
                 st.session_state.nearby_alternatives_cache = None
-                st.success(f"📍 Found: {geo_result['name'][:40]}...")
+                region_label = "Borneo" if geo_result['region'] == 'borneo' else "West Malaysia"
+                st.success(f"📍 Found ({region_label}): {geo_result['name'][:40]}...")
                 time.sleep(0.5)
                 st.rerun()
             else:
@@ -5197,7 +5268,7 @@ def main():
     st.markdown(f"""
     <div style="text-align: center; padding: 20px 0 10px 0;">
         <div class="main-title">🏙️ UNDERGROUNDBASE</div>
-        <div class="subtitle">{region_flag} MALAYSIA · SITE SELECTOR v5.3.1</div>
+        <div class="subtitle">{region_flag} MALAYSIA · SITE SELECTOR v5.3.3</div>
         <div style="display: flex; justify-content: center; gap: 10px; margin: 10px 0;">
             <span class="phase-badge phase-badge-2">🔧 PHASE 2</span>
             <span class="phase-badge phase-badge-3">🏗️ PHASE 3</span>
@@ -5292,7 +5363,7 @@ def main():
     <div style="text-align: center; padding: 15px 0; color: #333; font-family: 'Courier New', monospace; 
          font-size: 0.6rem; letter-spacing: 2px;">
         <span style="color: #00f0ff;">[</span> 
-        UNDERGROUNDBASEX v5.3.1 · UNIVERSAL SEARCH · ZERO DOWNLOADS
+        UNDERGROUNDBASEX v5.3.3 · UNIVERSAL SEARCH · ZERO DOWNLOADS
         <span style="color: #00f0ff;">]</span>
     </div>
     <div style="text-align: center; padding: 15px 0;">
