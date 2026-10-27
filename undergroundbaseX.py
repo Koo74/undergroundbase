@@ -193,22 +193,6 @@ def compute_display_score(rd: Dict) -> Dict:
         'not_feasible': not_feasible,
     }
 
-
-def compute_score_margin(rd: Dict) -> Dict:
-    confidence = rd.get('data_confidence', {})
-    confidence_pct = confidence.get('confidence_pct', 50)
-    margin = round((100 - confidence_pct) * 0.35, 1)
-    raw_score = rd.get('suitability_percentage', 0)
-    lower = max(0, round(raw_score - margin, 1))
-    upper = min(100, round(raw_score + margin, 1))
-    return {
-        'margin': margin,
-        'lower_bound': lower,
-        'upper_bound': upper,
-        'confidence_pct': confidence_pct,
-        'band': confidence.get('band', 'Unknown'),
-    }
-
 # ============================================================================
 # NEARBY ALTERNATIVES
 # ============================================================================
@@ -1569,7 +1553,7 @@ def nearest_fault(lat, lon):
 # ============================================================================
 
 _ELEV_UA = {
-    "User-Agent": "Mozilla/5.0 (compatible; UndergroundBase/5.3.6; +https://streamlit.io)",
+    "User-Agent": "Mozilla/5.0 (compatible; UndergroundBase/5.3.7; +https://streamlit.io)",
     "Accept": "application/json",
 }
 
@@ -2998,28 +2982,6 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
         except Exception:
             return None
 
-    def _compute_data_confidence(self, live_sources: Dict[str, bool]) -> Dict:
-        weights = {
-            'elevation': 0.20, 'bedrock': 0.15, 'water_table': 0.10,
-            'seismic': 0.20, 'geology': 0.15, 'onegeology': 0.10,
-            'slope': 0.05, 'fault': 0.05,
-        }
-        live_count = 0
-        total = 0.0
-        for key, w in weights.items():
-            total += w
-            if live_sources.get(key):
-                live_count += w
-        confidence_pct = round((live_count / total) * 100, 1) if total > 0 else 0
-        if confidence_pct >= 80:
-            band = 'High'
-        elif confidence_pct >= 55:
-            band = 'Moderate'
-        else:
-            band = 'Low'
-        return {'confidence_pct': confidence_pct, 'band': band,
-                'live_sources': live_sources}
-
     def _compute_investment_band(self, details: Dict, elevation_m: float, pop_density: float) -> str:
         infra = details.get('infrastructure_access', {}).get('value', {})
         high_cost_items = 0
@@ -3052,7 +3014,6 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
 
         scores, details = {}, {}
         data_source_details = []
-        live_sources = {}
         osm_available = False
 
         elevation_score, elevation_m, elev_source = self._get_elevation_quick(location)
@@ -3060,21 +3021,18 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
         details['elevation'] = {'score': elevation_score, 'value': f"{elevation_m:.0f}m",
                                 'weight': weights['elevation'], 'source': elev_source}
         data_source_details.append(f"Elevation: {elev_source}")
-        live_sources['elevation'] = 'Live' in elev_source
 
         bedrock_score, bedrock_m, bedrock_source = self._estimate_bedrock_depth(location)
         scores['bedrock_depth'] = bedrock_score
         details['bedrock_depth'] = {'score': bedrock_score, 'value': f"{bedrock_m:.0f}m",
                                     'weight': weights['bedrock_depth'], 'source': bedrock_source}
         data_source_details.append(f"Bedrock: {bedrock_source}")
-        live_sources['bedrock'] = False
 
         water_score, water_m, water_source = self._estimate_water_table(location)
         scores['water_table_depth'] = water_score
         details['water_table_depth'] = {'score': water_score, 'value': f"{water_m:.0f}m",
                                         'weight': weights['water_table_depth'], 'source': water_source}
         data_source_details.append(f"Water Table: {water_source}")
-        live_sources['water_table'] = False
 
         seismic_result = self._estimate_seismic_risk(location)
         if len(seismic_result) == 4:
@@ -3086,19 +3044,16 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
         details['seismic_risk'] = {'score': seismic_score, 'value': f"{seismic_emoji} {seismic_risk}",
                                    'weight': weights['seismic_risk'], 'source': seismic_source}
         data_source_details.append(f"Seismic: {seismic_source}")
-        live_sources['seismic'] = seismic_source.startswith('USGS')
 
         geology_score, geology_source, karst_data = self._geographic_score_geology(location)
         scores['geology'] = geology_score
         details['geology'] = {'score': geology_score, 'value': 'Underground construction',
                               'weight': weights['geology'], 'source': geology_source}
         data_source_details.append(f"Geology: {geology_source}")
-        live_sources['geology'] = False
 
         onegeo = self._get_onegeology_summary(location)
         if onegeo:
             data_source_details.append(f"🗺️ OneGeology: {onegeo['summary']}")
-        live_sources['onegeology'] = onegeo is not None
 
         pop_score, pop_density, pop_source = self._geographic_score_population(location)
         scores['population_density'] = pop_score
@@ -3134,7 +3089,6 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
         details['slope'] = {'score': slope_data['score'], 'value': f"{slope_data['slope_deg']}° ({slope_data['risk']})",
                             'weight': weights['slope'], 'source': slope_data['source']}
         data_source_details.append(f"Slope: {slope_data['slope_deg']}° ({slope_data['risk']})")
-        live_sources['slope'] = 'Live' in slope_data['source']
 
         fault = nearest_fault(location.lat, location.lon)
         if fault['distance_km'] < 10:
@@ -3151,7 +3105,6 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
                                       'weight': weights['fault_proximity'],
                                       'source': f"Nearest fault: {fault['name']} ({fault['activity']}, {fault['type']})"}
         data_source_details.append(f"Fault: {fault['name']} ({fault['distance_km']}km, {fault['activity']})")
-        live_sources['fault'] = False
 
         total_score = sum(scores[k] * weights.get(k, 0) for k in scores if k in weights)
         max_possible = sum(weights.values()) * 5.0
@@ -3202,7 +3155,6 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
         gw = estimate_groundwater_quality(location.lat, location.lon, self.region)
         protected = check_protected_area(location.lat, location.lon)
         cave_warning = karst_data.get('cave_collapse_warning') if karst_data else None
-        confidence = self._compute_data_confidence(live_sources)
         investment_band = self._compute_investment_band(details, elevation_m, pop_density)
 
         region_name = "Borneo" if self.region == "borneo" else "West Malaysia"
@@ -3236,7 +3188,6 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
             'protected_area': protected,
             'cave_warning': cave_warning,
             'karst_info': karst_data,
-            'data_confidence': confidence,
             'investment_band': investment_band,
             '_weights_used': weights,
             '_lat': location.lat,
@@ -4366,31 +4317,8 @@ def render_nearby_alternatives(rd: Dict, region: str):
                 st.rerun()
 
 
-def render_data_confidence(confidence):
-    pct = confidence['confidence_pct']
-    band = confidence['band']
-    color = '#39ff14' if band == 'High' else '#ffe84d' if band == 'Moderate' else '#ff2d95'
-    live_list = ', '.join(k for k, v in confidence['live_sources'].items() if v) or 'none'
-    st.markdown(f"""
-    <div class="confidence-bar">
-        <div style="color: #00f0ff; font-family: 'Courier New', monospace; font-size: 0.9rem; 
-             font-weight: bold; letter-spacing: 2px; margin-bottom: 8px;">
-            📡 DATA CONFIDENCE: <span style="color: {color};">{pct}% — {band}</span>
-        </div>
-        <div style="background: rgba(0,0,0,0.4); height: 8px; border-radius: 4px; overflow: hidden;">
-            <div style="background: {color}; height: 100%; width: {pct}%;"></div>
-        </div>
-        <div style="color: #a0a0c0; font-family: 'Courier New', monospace; 
-             font-size: 0.7rem; margin-top: 6px;">
-            Live sources: {live_list}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
 def render_suitability_metric(rd: Dict):
     disp = compute_display_score(rd)
-    margin = compute_score_margin(rd)
 
     if disp.get('not_feasible'):
         st.markdown(f"""
@@ -4441,8 +4369,6 @@ def render_suitability_metric(rd: Dict):
         st.metric("🏙️ Underground City Suitability",
                   f"{rd['suitability_percentage']}%",
                   delta=f"{rd['rating']} {rd['rating_emoji']}")
-        st.caption(f"📡 Confidence range: **{margin['lower_bound']}% – {margin['upper_bound']}%** "
-                   f"(±{margin['margin']}% at {margin['confidence_pct']}% data confidence)")
 
 
 def render_cost_summary(rd: Dict):
@@ -4559,9 +4485,6 @@ def render_results():
                     elif 'Fallback' in d: st.warning(f"⚠️ {d}")
                     elif 'OSM' in d: st.success(f"🟢 {d}")
                     else: st.success(f"✅ {d}")
-
-        if 'data_confidence' in rd:
-            render_data_confidence(rd['data_confidence'])
 
         render_suitability_metric(rd)
 
@@ -4723,7 +4646,6 @@ def render_comparison_mode(region):
                         'Protected': '🚫' if result.get('protected_area', {}).get('inside') else '✅',
                         'Slope°': result.get('slope_deg', 0),
                         'Investment': result.get('investment_band', 'Unknown'),
-                        'Confidence': f"{result.get('data_confidence', {}).get('confidence_pct', 0)}%",
                         'Capped': '⚠️' if disp['is_capped'] else '',
                         'Method': ('🛰️ USGS + 🗺️ OneGeo' if result.get('used_usgs') and result.get('used_onegeology')
                                    else '🛰️ USGS' if result.get('used_usgs')
@@ -4735,7 +4657,7 @@ def render_comparison_mode(region):
                     'Site': name, 'Suitability %': 0, 'Raw %': 0, 'Rating': 'Error',
                     'Elevation (m)': 0, 'Bedrock (m)': 0, 'Water Table (m)': 0,
                     'Seismic Risk': 'Unknown', 'Flood Risk': 'Unknown',
-                    'Protected': '?', 'Slope°': 0, 'Investment': '?', 'Confidence': '0%',
+                    'Protected': '?', 'Slope°': 0, 'Investment': '?',
                     'Capped': '', 'Method': 'Error', 'Data': None
                 })
         progress_bar.empty(); status_text.empty()
@@ -4883,7 +4805,6 @@ def render_multi_ranking_mode(region):
                             'Protected': '🚫' if result.get('protected_area', {}).get('inside') else '✅',
                             'Slope°': result.get('slope_deg', 0),
                             'Investment': result.get('investment_band', 'Unknown'),
-                            'Confidence': f"{result.get('data_confidence', {}).get('confidence_pct', 0)}%",
                             'Capped': '⚠️' if disp['is_capped'] else '',
                             'Data': result
                         })
@@ -5172,7 +5093,7 @@ def main():
     st.markdown(f"""
     <div style="text-align: center; padding: 20px 0 10px 0;">
         <div class="main-title">🏙️ UNDERGROUNDBASE</div>
-        <div class="subtitle">{region_flag} MALAYSIA · SITE SELECTOR v5.3.6</div>
+        <div class="subtitle">{region_flag} MALAYSIA · SITE SELECTOR v5.3.7</div>
         <div style="display: flex; justify-content: center; gap: 10px; margin: 10px 0;">
             <span class="phase-badge phase-badge-2">🔧 PHASE 2</span>
             <span class="phase-badge phase-badge-3">🏗️ PHASE 3</span>
@@ -5267,7 +5188,7 @@ def main():
     <div style="text-align: center; padding: 15px 0; color: #333; font-family: 'Courier New', monospace; 
          font-size: 0.6rem; letter-spacing: 2px;">
         <span style="color: #00f0ff;">[</span> 
-        UNDERGROUNDBASEX v5.3.6 · UNIVERSAL SEARCH · ZERO DOWNLOADS
+        UNDERGROUNDBASEX v5.3.7 · UNIVERSAL SEARCH · ZERO DOWNLOADS
         <span style="color: #00f0ff;">]</span>
     </div>
     <div style="text-align: center; padding: 15px 0;">
