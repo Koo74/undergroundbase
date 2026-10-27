@@ -1,18 +1,3 @@
-"""
-UndergroundBase v5.3.5
-=======================
-NOMINATIM SEARCH FIX (over v5.3.4):
-  13. FIXED: render_universal_search_sidebar() — Nominatim now runs BEFORE fuzzy
-      local fallback. Previously "Ampang" matched "Penampang" locally and skipped
-      Nominatim entirely. Now:
-        1. Coordinates parsed first
-        2. Exact-match against local dict (fast, high confidence)
-        3. Nominatim live geocode (global, accurate)
-        4. Fuzzy local fallback only if Nominatim fails
-      "Ampang", "Sungei Wang", "Pavilion" now resolve correctly via Nominatim.
-ALL v5.3.1–v5.3.4 features preserved byte-for-byte.
-"""
-
 import streamlit as st
 import folium
 from folium.plugins import Fullscreen, MiniMap, MousePosition, Draw, HeatMap
@@ -121,11 +106,6 @@ CYBERPUNK_CSS = """
     .stMarkdown h1 { color: #00f0ff !important; }
     .stMarkdown h2 { color: #b026ff !important; }
     .stMarkdown h3 { color: #ff2d95 !important; }
-    .confidence-bar {
-        background: rgba(15, 15, 35, 0.8);
-        border: 1px solid rgba(0, 240, 255, 0.2);
-        border-radius: 8px; padding: 12px; margin: 10px 0;
-    }
     .warning-box {
         background: rgba(255, 45, 149, 0.08);
         border: 1px solid rgba(255, 45, 149, 0.4);
@@ -1589,7 +1569,7 @@ def nearest_fault(lat, lon):
 # ============================================================================
 
 _ELEV_UA = {
-    "User-Agent": "Mozilla/5.0 (compatible; UndergroundBase/5.3.5; +https://streamlit.io)",
+    "User-Agent": "Mozilla/5.0 (compatible; UndergroundBase/5.3.6; +https://streamlit.io)",
     "Accept": "application/json",
 }
 
@@ -2081,83 +2061,6 @@ def _render_sensitivity_analysis(rd: Dict):
                    f"{(weights.get('bedrock_depth',0)+weights.get('water_table_depth',0)+weights.get('geology',0))*100:.0f}% "
                    f"of the total weight. If all three are simultaneously wrong by ±20%, the score can shift by up to "
                    f"~{abs(df['Delta']).max():.1f} points.")
-
-
-def _render_climate_context_tab(site_data: Dict):
-    """v5.3.0 FEATURE 7 (bonus): Climate Context tab in enhanced results."""
-    st.subheader("🌦️ Climate Context")
-    st.caption("Live climate data from Open-Meteo — pure context, does not affect suitability score")
-
-    lat = site_data.get('_lat', None)
-    lon = site_data.get('_lon', None)
-    if lat is None or lon is None:
-        coords = _parse_location_coords(site_data)
-        if coords:
-            lat, lon = coords
-
-    if lat is None or lon is None:
-        st.warning("Could not determine site coordinates for climate lookup.")
-        return
-
-    try:
-        r = requests.get(
-            "https://api.open-meteo.com/v1/climate",
-            params={
-                "latitude": lat, "longitude": lon,
-                "start_date": "2020-01-01", "end_date": "2024-12-31",
-                "daily": "temperature_2m_mean,precipitation_sum",
-                "timezone": "auto",
-            },
-            headers=_ELEV_UA, timeout=15,
-        )
-        if r.status_code == 200:
-            data = r.json()
-            daily = data.get('daily', {})
-            temps = [t for t in daily.get('temperature_2m_mean', []) if t is not None]
-            precip = [p for p in daily.get('precipitation_sum', []) if p is not None]
-
-            if temps and precip:
-                avg_temp = round(sum(temps) / len(temps), 1)
-                max_temp = round(max(temps), 1)
-                min_temp = round(min(temps), 1)
-                annual_precip = round(sum(precip) / 5.0, 0)
-
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Avg Temperature", f"{avg_temp}°C")
-                    st.caption(f"Range: {min_temp}°C — {max_temp}°C")
-                with col2:
-                    st.metric("Annual Rainfall (avg)", f"{annual_precip:.0f} mm")
-                    st.caption(f"5-year total: {sum(precip):.0f} mm")
-                with col3:
-                    rain_days = sum(1 for p in precip if p > 1.0) / 5.0
-                    st.metric("Rainy Days / Year", f"{rain_days:.0f}")
-                    st.caption("Days with >1mm rainfall")
-
-                st.markdown("---")
-                if annual_precip > 2500:
-                    st.warning(f"🌧️ **Very high rainfall zone** ({annual_precip:.0f} mm/yr) — "
-                               f"expect significant waterproofing and drainage costs for underground construction.")
-                elif annual_precip > 1500:
-                    st.info(f"🌧️ **Moderate-high rainfall** ({annual_precip:.0f} mm/yr) — "
-                            f"standard waterproofing required.")
-                else:
-                    st.success(f"☀️ **Low rainfall** ({annual_precip:.0f} mm/yr) — "
-                               f"waterproofing costs minimal.")
-
-                if avg_temp > 28:
-                    st.warning(f"🌡️ **Hot climate** ({avg_temp}°C avg) — "
-                               f"underground ventilation will need extra cooling capacity.")
-                elif avg_temp < 20:
-                    st.info(f"❄️ **Cool climate** ({avg_temp}°C avg) — "
-                            f"underground heating may be needed.")
-                else:
-                    st.success(f"🌡️ **Comfortable climate** ({avg_temp}°C avg) — "
-                               f"standard HVAC sufficient.")
-                return
-        st.info("Open-Meteo climate API did not return data for this site. This is normal for some locations.")
-    except Exception as e:
-        st.info(f"Climate context unavailable: {e}")
 
 
 def _render_custom_weights_sidebar():
@@ -4845,7 +4748,7 @@ def render_comparison_mode(region):
 
             display_cols = ['Site', 'Suitability %', 'Raw %', 'Rating', 'Elevation (m)', 'Bedrock (m)',
                           'Water Table (m)', 'Seismic Risk', 'Flood Risk', 'Protected',
-                          'Slope°', 'Investment', 'Confidence', 'Capped', 'Method']
+                          'Slope°', 'Investment', 'Capped', 'Method']
             st.dataframe(df_sorted[display_cols], use_container_width=True, hide_index=True)
 
             st.markdown("### 🎯 Multi-Metric Radar (Top 5 Sites)")
@@ -5104,7 +5007,6 @@ def render_enhanced_results(complete_plan: Dict):
     tabs = st.tabs([
         "📊 Overview", "💰 Phase 2: Infrastructure", "🏗️ Phase 3: Construction",
         "👥 Phase 4: Public", "🌍 Phase 5: Global",
-        "🌦️ Climate Context",
     ])
     with tabs[0]:
         site = complete_plan['phase_1_site_selection']['site_data']
@@ -5220,8 +5122,6 @@ def render_enhanced_results(complete_plan: Dict):
         st.subheader("🧠 AI Swarm")
         for agent in swarm_data['agents']:
             st.write(f"**{agent['role']}**: {agent['specialty']}")
-    with tabs[5]:
-        _render_climate_context_tab(complete_plan['phase_1_site_selection']['site_data'])
 
 
 def render_memory_explorer():
@@ -5272,7 +5172,7 @@ def main():
     st.markdown(f"""
     <div style="text-align: center; padding: 20px 0 10px 0;">
         <div class="main-title">🏙️ UNDERGROUNDBASE</div>
-        <div class="subtitle">{region_flag} MALAYSIA · SITE SELECTOR v5.3.5</div>
+        <div class="subtitle">{region_flag} MALAYSIA · SITE SELECTOR v5.3.6</div>
         <div style="display: flex; justify-content: center; gap: 10px; margin: 10px 0;">
             <span class="phase-badge phase-badge-2">🔧 PHASE 2</span>
             <span class="phase-badge phase-badge-3">🏗️ PHASE 3</span>
@@ -5282,7 +5182,7 @@ def main():
         <div class="cyber-divider"></div>
         <div style="color: #8080a0; font-family: 'Courier New', monospace; font-size: 0.7rem; 
              letter-spacing: 4px; margin-top: 5px;">
-            ⚡ HYBRID · 🛰️ USGS LIVE · 🗺️ ONEGEOLOGY LIVE · 🟢 OSM LIVE · ⛰️ SLOPE · 🌐 FAULTS · 🚫 PROTECTED · 📡 CONFIDENCE · 🧪 SENSITIVITY · 🌦️ CLIMATE · 🔍 SEARCH ⚡
+            ⚡ HYBRID · 🛰️ USGS LIVE · 🗺️ ONEGEOLOGY LIVE · 🟢 OSM LIVE · ⛰️ SLOPE · 🌐 FAULTS · 🚫 PROTECTED · 🧪 SENSITIVITY · 🔍 SEARCH ⚡
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -5367,7 +5267,7 @@ def main():
     <div style="text-align: center; padding: 15px 0; color: #333; font-family: 'Courier New', monospace; 
          font-size: 0.6rem; letter-spacing: 2px;">
         <span style="color: #00f0ff;">[</span> 
-        UNDERGROUNDBASEX v5.3.5 · UNIVERSAL SEARCH · ZERO DOWNLOADS
+        UNDERGROUNDBASEX v5.3.6 · UNIVERSAL SEARCH · ZERO DOWNLOADS
         <span style="color: #00f0ff;">]</span>
     </div>
     <div style="text-align: center; padding: 15px 0;">
