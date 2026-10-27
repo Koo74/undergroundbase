@@ -1,13 +1,16 @@
 """
-UndergroundBase v5.3.4
+UndergroundBase v5.3.5
 =======================
-SEARCH FIX (over v5.3.3):
-  12. FIXED: _geocode_location() now returns the top Nominatim result regardless
-      of country field casing. Removed countrycodes filter — it was rejecting
-      valid results (e.g. "Ampang" returns Ampang Jaya in Selangor, country="Malaysia"
-      but with a different casing that failed the .lower() check in some cases).
-      Uses a Malaysia bounding box + state-field matching for region detection.
-ALL v5.3.1–v5.3.3 features preserved byte-for-byte.
+NOMINATIM SEARCH FIX (over v5.3.4):
+  13. FIXED: render_universal_search_sidebar() — Nominatim now runs BEFORE fuzzy
+      local fallback. Previously "Ampang" matched "Penampang" locally and skipped
+      Nominatim entirely. Now:
+        1. Coordinates parsed first
+        2. Exact-match against local dict (fast, high confidence)
+        3. Nominatim live geocode (global, accurate)
+        4. Fuzzy local fallback only if Nominatim fails
+      "Ampang", "Sungei Wang", "Pavilion" now resolve correctly via Nominatim.
+ALL v5.3.1–v5.3.4 features preserved byte-for-byte.
 """
 
 import streamlit as st
@@ -1586,7 +1589,7 @@ def nearest_fault(lat, lon):
 # ============================================================================
 
 _ELEV_UA = {
-    "User-Agent": "Mozilla/5.0 (compatible; UndergroundBase/5.3.4; +https://streamlit.io)",
+    "User-Agent": "Mozilla/5.0 (compatible; UndergroundBase/5.3.5; +https://streamlit.io)",
     "Accept": "application/json",
 }
 
@@ -2385,10 +2388,13 @@ def _search_locations(query: str, region: str, max_results: int = 8) -> List[Dic
 
 def render_universal_search_sidebar():
     """
-    v5.3.4: Universal search bar in the sidebar.
-    Sits at the very top, above LOCATION SELECTOR.
-    Accepts place names OR coordinates.
-    Writes to st.session_state.selected_location on submit.
+    v5.3.5: Universal search bar in the sidebar.
+
+    Search strategy (in order):
+      1. Parse coordinates → jump directly.
+      2. Exact-match against local dictionaries (fast, offline, high confidence).
+      3. Nominatim live geocode (fuzzy, global — handles Ampang, Sungei Wang, Pavilion, etc.).
+      4. If Nominatim fails, fall back to local fuzzy matches.
     """
     st.markdown("""
     <div style="padding: 8px 0 4px 0;">
@@ -2403,7 +2409,7 @@ def render_universal_search_sidebar():
 
     query = st.text_input(
         "Search",
-        placeholder="e.g. Miri  OR  4.22, 114.03",
+        placeholder="e.g. Pavilion KL  OR  Ampang  OR  4.22, 114.03",
         label_visibility="collapsed",
         key="universal_search_input",
     )
@@ -2415,7 +2421,7 @@ def render_universal_search_sidebar():
 
         query = query.strip()
 
-        # ── Try coordinates first ─────────────────────────────────
+        # ── 1. Try coordinates first ─────────────────────────────
         coords = _parse_search_coordinates(query)
         if coords is not None:
             lat, lon = coords
@@ -2436,62 +2442,65 @@ def render_universal_search_sidebar():
             time.sleep(0.2)
             st.rerun()
 
-        # ── 1. Try Fuzzy search in local database first ───────────
+        # ── 2. Exact local match (only high-confidence) ───────────
         matches = _search_locations(query, st.session_state.get('region', 'borneo'), max_results=8)
+        if matches:
+            q_lower = query.strip().lower()
+            for m in matches:
+                # exact name equality or name starts with query → high confidence
+                if m['name'].lower() == q_lower or m['name'].lower().startswith(q_lower + " ") \
+                   or m['name'].lower().startswith(q_lower + ","):
+                    st.session_state.selected_location = Location(
+                        lat=m['lat'], lon=m['lon'], name=m['name']
+                    )
+                    st.session_state.region = m['region']
+                    st.session_state.current_results = None
+                    st.session_state.nearby_alternatives_cache = None
+                    st.success(f"📍 {m['name']}")
+                    time.sleep(0.2)
+                    st.rerun()
 
-        # ── 2. If no local match, use OpenStreetMap Geocoding ─────
-        if not matches:
-            with st.spinner("Searching map database..."):
-                geo_result = _geocode_location(query)
-                
-            if geo_result:
+        # ── 3. Nominatim live geocode (global, accurate) ──────────
+        with st.spinner("Searching map database..."):
+            geo_result = _geocode_location(query)
+
+        if geo_result:
+            st.session_state.selected_location = Location(
+                lat=geo_result['lat'], lon=geo_result['lon'], name=geo_result['name']
+            )
+            st.session_state.region = geo_result['region']
+            st.session_state.current_results = None
+            st.session_state.nearby_alternatives_cache = None
+            region_label = "Borneo" if geo_result['region'] == 'borneo' else "West Malaysia"
+            st.success(f"📍 Found ({region_label}): {geo_result['name'][:60]}")
+            time.sleep(0.5)
+            st.rerun()
+
+        # ── 4. Fallback: fuzzy local matches picker ───────────────
+        if matches:
+            st.markdown(f"**Could not locate live — {len(matches)} fuzzy matches in offline list:**")
+            options = [f"{m['name']}  ·  ({m['lat']:.3f}, {m['lon']:.3f})" for m in matches]
+            chosen = st.selectbox(
+                "Pick",
+                options=options,
+                key="universal_search_picker",
+                label_visibility="collapsed",
+            )
+            if st.button("🎯 GO", use_container_width=True, key="universal_search_go"):
+                idx = options.index(chosen)
+                best = matches[idx]
                 st.session_state.selected_location = Location(
-                    lat=geo_result['lat'], lon=geo_result['lon'], name=geo_result['name']
+                    lat=best['lat'], lon=best['lon'], name=best['name']
                 )
-                st.session_state.region = geo_result['region']
+                st.session_state.region = best['region']
                 st.session_state.current_results = None
                 st.session_state.nearby_alternatives_cache = None
-                region_label = "Borneo" if geo_result['region'] == 'borneo' else "West Malaysia"
-                st.success(f"📍 Found ({region_label}): {geo_result['name'][:40]}...")
-                time.sleep(0.5)
+                st.success(f"📍 {best['name']}")
+                time.sleep(0.2)
                 st.rerun()
-            else:
-                st.warning(f"Could not find '{query}'. Try adding 'Malaysia' or a state name (e.g., 'Ampang, Selangor').")
-                return
+            return
 
-        if len(matches) == 1 or matches[0]['score'] > 90:
-            best = matches[0]
-            st.session_state.selected_location = Location(
-                lat=best['lat'], lon=best['lon'], name=best['name']
-            )
-            st.session_state.region = best['region']
-            st.session_state.current_results = None
-            st.session_state.nearby_alternatives_cache = None
-            st.success(f"📍 {best['name']}")
-            time.sleep(0.2)
-            st.rerun()
-
-        # Multiple matches — show picker
-        st.markdown(f"**{len(matches)} matches — pick one:**")
-        options = [f"{m['name']}  ·  ({m['lat']:.3f}, {m['lon']:.3f})" for m in matches]
-        chosen = st.selectbox(
-            "Pick",
-            options=options,
-            key="universal_search_picker",
-            label_visibility="collapsed",
-        )
-        if st.button("🎯 GO", use_container_width=True, key="universal_search_go"):
-            idx = options.index(chosen)
-            best = matches[idx]
-            st.session_state.selected_location = Location(
-                lat=best['lat'], lon=best['lon'], name=best['name']
-            )
-            st.session_state.region = best['region']
-            st.session_state.current_results = None
-            st.session_state.nearby_alternatives_cache = None
-            st.success(f"📍 {best['name']}")
-            time.sleep(0.2)
-            st.rerun()
+        st.warning(f"Could not find '{query}'. Try adding 'Malaysia' or a state name (e.g., 'Ampang, Selangor').")
 
     st.markdown('<div class="cyber-divider"></div>', unsafe_allow_html=True)
 
@@ -5263,7 +5272,7 @@ def main():
     st.markdown(f"""
     <div style="text-align: center; padding: 20px 0 10px 0;">
         <div class="main-title">🏙️ UNDERGROUNDBASE</div>
-        <div class="subtitle">{region_flag} MALAYSIA · SITE SELECTOR v5.3.4</div>
+        <div class="subtitle">{region_flag} MALAYSIA · SITE SELECTOR v5.3.5</div>
         <div style="display: flex; justify-content: center; gap: 10px; margin: 10px 0;">
             <span class="phase-badge phase-badge-2">🔧 PHASE 2</span>
             <span class="phase-badge phase-badge-3">🏗️ PHASE 3</span>
@@ -5358,7 +5367,7 @@ def main():
     <div style="text-align: center; padding: 15px 0; color: #333; font-family: 'Courier New', monospace; 
          font-size: 0.6rem; letter-spacing: 2px;">
         <span style="color: #00f0ff;">[</span> 
-        UNDERGROUNDBASEX v5.3.4 · UNIVERSAL SEARCH · ZERO DOWNLOADS
+        UNDERGROUNDBASEX v5.3.5 · UNIVERSAL SEARCH · ZERO DOWNLOADS
         <span style="color: #00f0ff;">]</span>
     </div>
     <div style="text-align: center; padding: 15px 0;">
