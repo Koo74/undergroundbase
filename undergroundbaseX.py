@@ -443,7 +443,7 @@ def generate_recommendation_strategy(result_data: Dict) -> Dict:
         if recommendations['investment_required'] == 'Low':
             recommendations['investment_required'] = 'Moderate'
     elif water_table < 60:
-        add_action('immediate_actions', f'💧 GOOD WATER TABLE ({water_table:.0f}m) - manageable.', 'Low', '💸💸')
+        add_action('immediate_actions', f'💧 MODERATE-DEEP WATER TABLE ({water_table:.0f}m) - manageable.', 'Low', '💸💸')
     else:
         add_action('immediate_actions', f'💧 DEEP WATER TABLE ({water_table:.0f}m) - excellent.', 'Low', '💸')
 
@@ -2644,24 +2644,26 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
 
     def _estimate_bedrock_depth(self, location: Location) -> tuple:
         lat, lon = location.lat, location.lon
+        # FIX: label wording neutralised — "shallow bedrock" is a limitation,
+        # not a benefit, for deep underground construction. Values/scores unchanged.
         if self.region == "borneo":
             if 5.8 < lat < 6.2 and 116.4 < lon < 116.8:
-                return 5.0, 5, 'Geographic: Kinabalu region - shallow bedrock'
+                return 5.0, 5, 'Geographic: Kinabalu region - shallow bedrock (limited depth)'
             elif lat > 5.5 and 116.0 < lon < 117.5:
-                return 4.5, 15, 'Geographic: Interior highlands - shallow bedrock'
+                return 4.5, 15, 'Geographic: Interior highlands - shallow bedrock (limited depth)'
             elif lat > 4.5 and lon > 117.5:
                 return 4.0, 25, 'Geographic: E. Sabah hills - moderate bedrock'
             elif lat > 2.5 and 114.0 < lon < 115.5:
-                return 4.5, 20, 'Geographic: Sarawak interior - good bedrock'
+                return 4.5, 20, 'Geographic: Sarawak interior - shallow bedrock (limited depth)'
             elif lat > 5.0 and 115.0 < lon < 117.0:
-                return 5.0, 10, 'Geographic: Crocker Range - shallow bedrock'
+                return 5.0, 10, 'Geographic: Crocker Range - shallow bedrock (limited depth)'
             else:
                 return 3.0, 50, 'Geographic: Lowland area - deeper bedrock'
         else:
             if 3.3 < lat < 4.7 and 101.3 < lon < 101.9:
-                return 5.0, 8, 'Geographic: Titiwangsa Range - shallow bedrock'
+                return 5.0, 8, 'Geographic: Titiwangsa Range - shallow bedrock (limited depth)'
             elif 5.5 < lat < 6.5 and 100.3 < lon < 101.0:
-                return 4.5, 15, 'Geographic: Kedah interior - shallow bedrock'
+                return 4.5, 15, 'Geographic: Kedah interior - shallow bedrock (limited depth)'
             elif 4.5 < lat < 5.5 and 100.9 < lon < 101.5:
                 return 4.5, 12, 'Geographic: Perak interior - limestone geology'
             elif 4.5 < lat < 6.0 and 101.5 < lon < 102.5:
@@ -2675,34 +2677,37 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
 
     def _estimate_water_table(self, location: Location) -> tuple:
         lat, lon = location.lat, location.lon
+        # FIX: "GOOD water table" wording neutralised — for underground
+        # construction a shallow water table is a dewatering cost, not a benefit.
+        # Numeric values and scores are unchanged.
         if self.region == "borneo":
             if 5.8 < lat < 6.2 and 116.4 < lon < 116.8:
-                return 5.0, 50, 'Geographic: Kinabalu region - GOOD water table (50m)'
+                return 5.0, 50, 'Geographic: Kinabalu region - deep water table (50m)'
             elif lat > 5.5 and 116.0 < lon < 117.5:
-                return 4.5, 40, 'Geographic: Interior highlands - GOOD water table (40m)'
+                return 4.5, 40, 'Geographic: Interior highlands - moderate-deep water table (40m)'
             elif lat > 4.5 and lon > 117.5:
-                return 4.0, 30, 'Geographic: E. Sabah hills - GOOD water table (30m)'
+                return 4.0, 30, 'Geographic: E. Sabah hills - moderate water table (30m)'
             elif lat > 2.5 and 114.0 < lon < 115.5:
-                return 4.5, 35, 'Geographic: Sarawak interior - GOOD water table (35m)'
+                return 4.5, 35, 'Geographic: Sarawak interior - moderate-deep water table (35m)'
             elif lat > 5.0 and 115.0 < lon < 117.0:
-                return 5.0, 45, 'Geographic: Crocker Range - GOOD water table (45m)'
+                return 5.0, 45, 'Geographic: Crocker Range - deep water table (45m)'
             else:
-                return 2.5, 10, 'Geographic: Lowland area - SHALLOW water table (10m)'
+                return 2.5, 10, 'Geographic: Lowland area - shallow water table (10m, dewatering cost)'
         else:
             if 3.3 < lat < 4.7 and 101.3 < lon < 101.9:
-                return 5.0, 60, 'Geographic: Titiwangsa highlands - DEEP water table (60m)'
+                return 5.0, 60, 'Geographic: Titiwangsa highlands - deep water table (60m)'
             elif 5.5 < lat < 6.5 and 100.3 < lon < 101.0:
-                return 4.5, 45, 'Geographic: Kedah interior - GOOD water table (45m)'
+                return 4.5, 45, 'Geographic: Kedah interior - deep water table (45m)'
             elif 4.5 < lat < 5.5 and 100.9 < lon < 101.5:
-                return 4.5, 50, 'Geographic: Perak interior - GOOD water table (50m)'
+                return 4.5, 50, 'Geographic: Perak interior - deep water table (50m)'
             elif 4.5 < lat < 6.0 and 101.5 < lon < 102.5:
-                return 4.5, 50, 'Geographic: Kelantan/Pahang highlands - GOOD water table (50m)'
+                return 4.5, 50, 'Geographic: Kelantan/Pahang highlands - deep water table (50m)'
             elif 3.5 < lat < 4.5 and 101.9 < lon < 103.0:
-                return 4.0, 40, 'Geographic: Pahang interior - GOOD water table (40m)'
+                return 4.0, 40, 'Geographic: Pahang interior - moderate-deep water table (40m)'
             elif lat < 2.5 and 102.5 < lon < 104.0:
-                return 4.0, 40, 'Geographic: Johor interior - GOOD water table (40m)'
+                return 4.0, 40, 'Geographic: Johor interior - moderate-deep water table (40m)'
             else:
-                return 2.5, 10, 'Geographic: Coastal lowland - SHALLOW water table (10m)'
+                return 2.5, 10, 'Geographic: Coastal lowland - shallow water table (10m, dewatering cost)'
 
     def _get_seismic_usgs(self, location: Location) -> Optional[Dict]:
         try:
@@ -3192,6 +3197,9 @@ class UndergroundCitySuitabilityStrategy(AnalysisStrategy):
             '_weights_used': weights,
             '_lat': location.lat,
             '_lon': location.lon,
+            # FIX: carry the raw geology description through so CostEstimator
+            # can pick rock_type from actual geology, not just elevation.
+            '_geology_source': geology_source,
         }
 
 
@@ -3406,15 +3414,44 @@ class CostEstimator:
         'infrastructure': {'water': 500, 'power': 800, 'ventilation': 1200, 'transport': 1500, 'telecom': 400},
         'finishing': {'basic': 1500, 'mid': 3000, 'luxury': 5000}
     }
+
+    def _resolve_rock_type(self, site_data: Dict, elevation: float, geology_score: float) -> str:
+        """
+        FIX: pick rock type from the ACTUAL geology description first,
+        then karst_info, then fall back to elevation+score heuristic.
+        This removes the "granite geology but Rock Type: Soil" contradiction.
+        """
+        # 1) Known karst region → soft rock (limestone / karst)
+        if site_data.get('karst_info'):
+            return 'soft_rock'
+
+        # 2) Parse the geology source string (from _geographic_score_geology)
+        geo_src = (site_data.get('_geology_source') or '').lower()
+        if any(k in geo_src for k in ('granite', 'granitic', 'kinabalu', 'titiwangsa')):
+            return 'hard_rock'
+        if any(k in geo_src for k in ('karst', 'limestone', 'mulu', 'niah', 'bau', 'perak limestone',
+                                      'kelantan limestone', 'batu caves')):
+            return 'soft_rock'
+        if any(k in geo_src for k in ('sedimentary', 'sandstone', 'shale', 'kedah sedimentary',
+                                      'southern sarawak')):
+            return 'soft_rock'
+        if any(k in geo_src for k in ('volcanic', 'rhyolitic', 'pahang volcanic')):
+            return 'hard_rock'
+
+        # 3) Fallback: old heuristic — but only when geology is genuinely unknown
+        if elevation > 500 and geology_score > 4:
+            return 'hard_rock'
+        elif elevation > 200:
+            return 'soft_rock'
+        else:
+            return 'soil'
+
     def estimate(self, site_data: Dict, size_sqm: int = 1000000) -> Dict:
         elevation = site_data.get('elevation_m', 100)
         geology_score = site_data.get('scores', {}).get('geology', 3)
-        if elevation > 500 and geology_score > 4:
-            rock_type = 'hard_rock'
-        elif elevation > 200:
-            rock_type = 'soft_rock'
-        else:
-            rock_type = 'soil'
+
+        rock_type = self._resolve_rock_type(site_data, elevation, geology_score)
+
         excavation_cost = self.COST_FACTORS['excavation'][rock_type] * size_sqm
         construction_cost = self.COST_FACTORS['construction']['mid'] * size_sqm * 0.4
         infrastructure_cost = sum(self.COST_FACTORS['infrastructure'].values()) * size_sqm * 0.2
